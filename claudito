@@ -1,0 +1,142 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_NAME="claudito:latest"
+CONTAINER_NAME="claudito-$(basename "$PWD")"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+log() {
+    echo -e "${GREEN}[claudito]${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[claudito]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[claudito]${NC} $1" >&2
+}
+
+# Check if Docker is available
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        error "Docker is not installed or not in PATH"
+        exit 1
+    fi
+    
+    if ! docker info &> /dev/null; then
+        error "Docker daemon is not running"
+        exit 1
+    fi
+}
+
+# Detect and extract Claude Code credentials
+setup_credentials() {
+    local creds_dir="$HOME/.claudito_creds"
+    mkdir -p "$creds_dir"
+    
+    # Try macOS Keychain first
+    if command -v security &> /dev/null; then
+        log "Checking macOS Keychain for Claude Code credentials..."
+        if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w &> /dev/null; then
+            security find-generic-password -s "Claude Code-credentials" -a "$USER" -w > "$creds_dir/.credentials.json"
+            log "Extracted credentials from macOS Keychain"
+            return 0
+        fi
+    fi
+    
+    # Try Linux credentials file
+    if [ -f "$HOME/.claude/.credentials.json" ]; then
+        log "Found Claude Code credentials file"
+        cp "$HOME/.claude/.credentials.json" "$creds_dir/.credentials.json"
+        return 0
+    fi
+    
+    # No credentials found
+    error "No Claude Code credentials found!"
+    error "Please run 'claude' first to authenticate, then try again."
+    exit 1
+}
+
+# Build Docker image if it doesn't exist
+build_image() {
+    if ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
+        log "Building claudito Docker image..."
+        docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"
+        log "Image built successfully"
+    else
+        log "Using existing claudito image"
+    fi
+}
+
+# Main run function
+run_container() {
+    local creds_dir="$HOME/.claudito_creds"
+    
+    log "Starting claudito container..."
+    
+    # Remove existing container if it exists
+    docker rm -f "$CONTAINER_NAME" &> /dev/null || true
+    
+    # Run the container with security restrictions
+    docker run --rm -it \
+        --name "$CONTAINER_NAME" \
+        --cap-drop=ALL \
+        --security-opt no-new-privileges \
+        --read-only \
+        --tmpfs /tmp \
+        --tmpfs /home/claude/.npm \
+        --tmpfs /home/claude/.cache \
+        -v "$PWD":/workspace \
+        -v "$creds_dir":/home/claude/.claude:ro \
+        "$IMAGE_NAME"
+}
+
+# Handle command line arguments
+case "${1:-}" in
+    --rebuild)
+        log "Rebuilding claudito image..."
+        docker image rm "$IMAGE_NAME" &> /dev/null || true
+        ;;
+    --help|-h)
+        echo "claudito - Secure Claude Code Container"
+        echo ""
+        echo "Usage: $0 [OPTIONS]"
+        echo ""
+        echo "Options:"
+        echo "  --rebuild    Force rebuild of Docker image"
+        echo "  --help, -h   Show this help message"
+        echo ""
+        echo "Requirements:"
+        echo "  - Docker installed and running"
+        echo "  - Claude Code authenticated (run 'claude' first)"
+        exit 0
+        ;;
+    "")
+        # Default behavior - just run
+        ;;
+    *)
+        error "Unknown option: $1"
+        error "Use --help for usage information"
+        exit 1
+        ;;
+esac
+
+# Main execution flow
+main() {
+    log "Starting claudito..."
+    
+    check_docker
+    setup_credentials
+    build_image
+    run_container
+}
+
+main
