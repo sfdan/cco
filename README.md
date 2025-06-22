@@ -4,12 +4,21 @@ A minimal, secure way to run Claude Code in a Docker container with proper authe
 
 ## Why Claudito?
 
-Claude Code is fantastic but sometimes you want to run it in isolation - for security, for clean environments, or for CI/CD. Claudito gives you a secure containerized Claude Code that:
+Claude Code's `--dangerously-skip-permissions` flag enables autonomous operation but **runs commands directly on your host system**. **Claudito gives you the speed of autonomous Claude with container protection.**
 
-- **Just Works™**: Automatically inherits your Claude Code authentication
-- **Secure by Default**: Runs with minimal privileges and network restrictions  
-- **Zero Config**: Works out of the box if Claude Code is authenticated
-- **Cross Platform**: macOS and Linux support
+### The Problem
+- Claude Code without `--dangerously-skip-permissions`: Constantly asks for permission, breaks flow
+- Claude Code with `--dangerously-skip-permissions`: Fast and autonomous but **vulnerable to prompt injection attacks**
+
+### The Solution  
+Claudito runs Claude Code with `--dangerously-skip-permissions` **inside a secure container**, protecting you from:
+
+- **Prompt Injection Attacks**: Malicious websites can't `rm -rf /` your system
+- **Accidental Damage**: Mistakes are contained, not catastrophic  
+- **Autonomous Speed**: No permission prompts, Claude works at full speed
+- **Host Isolation**: Your real system stays safe
+
+**If you don't need `--dangerously-skip-permissions`, just use `claude` directly.**
 
 ## Quick Start
 
@@ -23,8 +32,6 @@ curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh |
 
 ```bash
 # First, make sure Claude Code is authenticated
-claude
-
 # Then run claudito in any project directory
 claudito
 
@@ -59,16 +66,18 @@ chmod +x /usr/local/bin/claudito
 ### Basic Usage
 
 ```bash
-# Interactive Claude Code session
+# Interactive Claude Code session (with --dangerously-skip-permissions enabled)
 claudito
 
-# Pass arguments to Claude Code
+# Pass arguments to Claude Code (autonomous operation, container isolated)
 claudito "analyze this codebase"
 claudito --resume
 
 # Get help
 claudito --help
 ```
+
+**Note**: Claudito runs Claude Code with `--dangerously-skip-permissions` by default. This allows Claude to work autonomously without permission prompts while keeping your host system protected by container isolation.
 
 ### Advanced Usage
 
@@ -171,11 +180,11 @@ Claudito inherits all Claude Code configuration from `~/.claude/`:
 ### Development Workflow
 
 ```bash
-# Start working on a project
+# Start working on a project (full Claude Code power, safely contained)
 cd my-project
 claudito
 
-# Run specific Claude Code commands
+# Run specific Claude Code commands (autonomous operation, no permission prompts)
 claudito "add tests for the auth module"
 claudito --resume  # Continue previous conversation
 
