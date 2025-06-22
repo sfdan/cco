@@ -28,33 +28,35 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Note: exa and git-delta require newer Rust version than available in bookworm
-# Users can use ls and git diff instead
-
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
 # Create symlinks for fd (some systems call it fdfind)
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-# Set up non-root user (following Anthropic's pattern)
-RUN useradd -ms /bin/bash claude && \
-    usermod -aG docker claude
+# Create user with dynamic UID/GID (will be overridden at runtime)
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN groupadd -g ${HOST_GID} user || true
+RUN useradd -u ${HOST_UID} -g ${HOST_GID} -ms /bin/bash user
 
-# Switch to non-root user
-USER claude
-ENV HOME=/home/claude
-WORKDIR /workspace
+# Switch to user
+USER user
+WORKDIR /home/user
 
-# Create claude config directory
-RUN mkdir -p /home/claude/.claude
+# Copy Claude configuration from host (extracted by claudito script)
+COPY --chown=user:user .claude/ /home/user/.claude/
+
+# Set environment variables
+ENV HOME=/home/user
+ENV CLAUDE_CONFIG_DIR=/home/user/.claude
+ENV USER=user
 
 # Set up shell environment with modern tools
-RUN echo 'export PATH=$PATH:/usr/local/go/bin' >> /home/claude/.bashrc && \
-    echo 'alias ll="ls -la"' >> /home/claude/.bashrc && \
-    echo 'alias cat="bat --paging=never"' >> /home/claude/.bashrc && \
-    echo 'alias find="fd"' >> /home/claude/.bashrc
+RUN echo 'export PATH=$PATH:/usr/local/go/bin' >> /home/user/.bashrc && \
+    echo 'alias ll="ls -la"' >> /home/user/.bashrc && \
+    echo 'alias cat="bat --paging=never"' >> /home/user/.bashrc && \
+    echo 'alias find="fd"' >> /home/user/.bashrc
 
-# Default command: Start Claude Code with dangerous permissions skipped
-# (safe because we're in a sandboxed container)
+# Default command: Run Claude Code
 CMD ["claude", "--dangerously-skip-permissions"]

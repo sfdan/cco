@@ -37,97 +37,148 @@ check_docker() {
     fi
 }
 
-# Detect and extract Claude Code credentials
+# Extract Claude Code configuration to .claude directory for Docker build
 setup_credentials() {
-    local creds_dir="$HOME/.claudito_creds"
-    mkdir -p "$creds_dir"
+    log "Setting up Claude Code configuration..."
     
-    # Try macOS Keychain first
+    # Clean up any existing .claude directory
+    rm -rf "$SCRIPT_DIR/.claude"
+    mkdir -p "$SCRIPT_DIR/.claude"
+    
+    # Copy entire ~/.claude directory if it exists (commands, projects, todos, etc.)
+    if [ -d "$HOME/.claude" ]; then
+        log "Copying Claude Code configuration from ~/.claude"
+        cp -r "$HOME/.claude"/* "$SCRIPT_DIR/.claude/" 2>/dev/null || true
+    fi
+    
+    # Extract fresh credentials from macOS Keychain (overrides any existing)
     if command -v security &> /dev/null; then
-        log "Checking macOS Keychain for Claude Code credentials..."
-        if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w &> /dev/null; then
-            security find-generic-password -s "Claude Code-credentials" -a "$USER" -w > "$creds_dir/.credentials.json"
-            log "Extracted credentials from macOS Keychain"
-            return 0
+        log "Extracting fresh credentials from macOS Keychain..."
+        if KEYCHAIN_CREDENTIALS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null); then
+            echo "$KEYCHAIN_CREDENTIALS" > "$SCRIPT_DIR/.claude/.credentials.json"
+            log "Fresh credentials extracted from macOS Keychain"
+        else
+            error "No Claude Code credentials found in macOS Keychain"
+            error "Please run 'claude' first to authenticate, then try again."
+            exit 1
+        fi
+    elif [ -f "$HOME/.claude/.credentials.json" ]; then
+        log "Using existing Claude Code credentials file"
+        # Already copied above, no need to do anything
+    else
+        error "No Claude Code credentials found!"
+        error "Please run 'claude' first to authenticate, then try again."
+        exit 1
+    fi
+    
+    # Copy .claude.json from home directory (if exists) with OAuth account info
+    if [ -f "$HOME/.claude.json" ]; then
+        log "Copying .claude.json with OAuth account info"
+        # Extract minimal OAuth info for fresh start, or copy full file
+        if command -v jq &> /dev/null; then
+            jq '{oauthAccount: .oauthAccount, hasCompletedOnboarding: true, lastOnboardingVersion: "1.0.31"}' "$HOME/.claude.json" > "$SCRIPT_DIR/.claude/.claude.json" 2>/dev/null || cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude/.claude.json"
+        else
+            cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude/.claude.json"
         fi
     fi
     
-    # Try Linux credentials file
-    if [ -f "$HOME/.claude/.credentials.json" ]; then
-        log "Found Claude Code credentials file"
-        cp "$HOME/.claude/.credentials.json" "$creds_dir/.credentials.json"
-        return 0
-    fi
-    
-    # No credentials found
-    error "No Claude Code credentials found!"
-    error "Please run 'claude' first to authenticate, then try again."
-    exit 1
+    log "Claude Code configuration prepared for container build"
 }
 
-# Build Docker image if it doesn't exist
+# Build Docker image
 build_image() {
-    if ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
-        log "Building claudito Docker image..."
-        docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"
-        log "Image built successfully"
-    else
-        log "Using existing claudito image"
-    fi
+    local host_uid=$(id -u)
+    local host_gid=$(id -g)
+    
+    log "Building claudito Docker image..."
+    docker build -t "$IMAGE_NAME" --build-arg HOST_UID="$host_uid" --build-arg HOST_GID="$host_gid" "$SCRIPT_DIR"
+    log "Image built successfully"
 }
 
 # Main run function
 run_container() {
-    local creds_dir="$HOME/.claudito_creds"
+    local host_uid=$(id -u)
+    local host_gid=$(id -g)
+    local current_dir="$PWD"
     
     log "Starting claudito container..."
+    log "Using host UID:GID ${host_uid}:${host_gid}"
     
     # Remove existing container if it exists
     docker rm -f "$CONTAINER_NAME" &> /dev/null || true
     
-    # Run the container with security restrictions
-    docker run --rm -it \
-        --name "$CONTAINER_NAME" \
-        --cap-drop=ALL \
-        --security-opt no-new-privileges \
-        --read-only \
-        --tmpfs /tmp \
-        --tmpfs /home/claude/.npm \
-        --tmpfs /home/claude/.cache \
-        -v "$PWD":/workspace \
-        -v "$creds_dir":/home/claude/.claude:ro \
-        "$IMAGE_NAME"
+    # Detect if we have a TTY
+    local tty_flag=""
+    if [ -t 0 ] && [ -t 1 ]; then
+        tty_flag="-it"
+    fi
+    
+    local docker_args=(
+        --rm $tty_flag
+        --name "$CONTAINER_NAME"
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --user "${host_uid}:${host_gid}"
+        -v "$current_dir":"$current_dir"
+        -w "$current_dir"
+    )
+    
+    # Bind mount common config files
+    [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"/home/user/.gitconfig:ro")
+    [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"/home/user/.ssh:ro")
+    
+    # Run the container
+    if [ "$shell_mode" = true ]; then
+        docker run "${docker_args[@]}" "$IMAGE_NAME" bash
+    else
+        if [ ${#claude_args[@]} -eq 0 ]; then
+            docker run "${docker_args[@]}" "$IMAGE_NAME"
+        else
+            docker run "${docker_args[@]}" "$IMAGE_NAME" claude --dangerously-skip-permissions "${claude_args[@]}"
+        fi
+    fi
 }
 
 # Handle command line arguments
-case "${1:-}" in
-    --rebuild)
-        log "Rebuilding claudito image..."
-        docker image rm "$IMAGE_NAME" &> /dev/null || true
-        ;;
-    --help|-h)
-        echo "claudito - Secure Claude Code Container"
-        echo ""
-        echo "Usage: $0 [OPTIONS]"
-        echo ""
-        echo "Options:"
-        echo "  --rebuild    Force rebuild of Docker image"
-        echo "  --help, -h   Show this help message"
-        echo ""
-        echo "Requirements:"
-        echo "  - Docker installed and running"
-        echo "  - Claude Code authenticated (run 'claude' first)"
-        exit 0
-        ;;
-    "")
-        # Default behavior - just run
-        ;;
-    *)
-        error "Unknown option: $1"
-        error "Use --help for usage information"
-        exit 1
-        ;;
-esac
+rebuild_image=false
+claude_args=()
+
+shell_mode=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --rebuild)
+            rebuild_image=true
+            shift
+            ;;
+        --shell)
+            shell_mode=true
+            shift
+            ;;
+        --help|-h)
+            echo "claudito - Secure Claude Code Container"
+            echo ""
+            echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
+            echo ""
+            echo "Options:"
+            echo "  --rebuild         Force rebuild of Docker image"
+            echo "  --shell           Start interactive shell for debugging"
+            echo "  --help, -h        Show this help message"
+            echo ""
+            echo "All other arguments are passed to Claude Code inside the container."
+            echo ""
+            echo "Requirements:"
+            echo "  - Docker installed and running"
+            echo "  - Claude Code authenticated (run 'claude' first)"
+            exit 0
+            ;;
+        *)
+            # Pass all other arguments to Claude
+            claude_args+=("$1")
+            shift
+            ;;
+    esac
+done
 
 # Main execution flow
 main() {
@@ -135,7 +186,19 @@ main() {
     
     check_docker
     setup_credentials
-    build_image
+    
+    # Rebuild image if requested or if image doesn't exist
+    if [ "$rebuild_image" = true ]; then
+        log "Rebuilding claudito image..."
+        docker image rm "$IMAGE_NAME" &> /dev/null || true
+        build_image
+    elif ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
+        log "No existing image found, building..."
+        build_image
+    else
+        log "Using existing claudito image"
+    fi
+    
     run_container
 }
 

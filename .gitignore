@@ -6,6 +6,12 @@ devlog/
 # Credential staging area
 .claudito_creds/
 
+# Claudito home directory
+.claudito/
+
+# Extracted credentials for Docker build
+.claude/
+
 # System files
 .DS_Store
 Thumbs.db
