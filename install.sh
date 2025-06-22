@@ -27,7 +27,7 @@ info() {
 
 # Configuration
 GITHUB_REPO="nikvdp/claudito"
-GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/master"
+GITHUB_RAW_URL="${CLAUDITO_INSTALL_URL:-https://raw.githubusercontent.com/${GITHUB_REPO}/master}"
 INSTALL_DIR="/usr/local/bin"
 INSTALL_PATH="${INSTALL_DIR}/claudito"
 
@@ -112,7 +112,11 @@ install_claudito() {
     # Download claudito script
     if ! curl -fsSL "${GITHUB_RAW_URL}/claudito" -o "${INSTALL_PATH}.tmp"; then
         error "Failed to download claudito script"
-        error "Please check your internet connection and try again."
+        if [[ -n "$CLAUDITO_INSTALL_URL" ]]; then
+            error "Please check your custom server is running at ${CLAUDITO_INSTALL_URL}"
+        else
+            error "Please check your internet connection and try again."
+        fi
         exit 1
     fi
     
