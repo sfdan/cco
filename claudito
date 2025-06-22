@@ -123,6 +123,48 @@ run_container() {
         -w "$current_dir"
     )
     
+    # Pass through relevant environment variables
+    local env_vars=(
+        "ANTHROPIC_API_KEY"
+        "ANTHROPIC_BASE_URL" 
+        "CLAUDE_CONFIG_DIR"
+        "NO_COLOR"
+        "TERM"
+        "COLORTERM"
+        "LANG"
+        "LC_ALL"
+        "TZ"
+        "HTTP_PROXY"
+        "HTTPS_PROXY"
+        "NO_PROXY"
+        "GIT_AUTHOR_NAME"
+        "GIT_AUTHOR_EMAIL"
+        "GIT_COMMITTER_NAME"
+        "GIT_COMMITTER_EMAIL"
+    )
+    
+    for var in "${env_vars[@]}"; do
+        if [ -n "${!var}" ]; then
+            docker_args+=(-e "$var=${!var}")
+        fi
+    done
+    
+    # Add custom environment variables from command line
+    for custom_env in "${custom_env_vars[@]}"; do
+        if [[ "$custom_env" == *"="* ]]; then
+            # KEY=VALUE format
+            docker_args+=(-e "$custom_env")
+        else
+            # KEY format - pass through from host environment
+            if [ -n "${!custom_env}" ]; then
+                docker_args+=(-e "$custom_env=${!custom_env}")
+            fi
+        fi
+    done
+    
+    # Load .env file if it exists
+    [ -f ".env" ] && docker_args+=(--env-file .env)
+    
     # Bind mount common config files
     [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"/home/user/.gitconfig:ro")
     [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"/home/user/.ssh:ro")
@@ -142,8 +184,8 @@ run_container() {
 # Handle command line arguments
 rebuild_image=false
 claude_args=()
-
 shell_mode=false
+custom_env_vars=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -155,6 +197,14 @@ while [[ $# -gt 0 ]]; do
             shell_mode=true
             shift
             ;;
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                error "--env requires an argument (KEY=VALUE or KEY)"
+                exit 1
+            fi
+            custom_env_vars+=("$2")
+            shift 2
+            ;;
         --help|-h)
             echo "claudito - Secure Claude Code Container"
             echo ""
@@ -163,9 +213,15 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --rebuild         Force rebuild of Docker image"
             echo "  --shell           Start interactive shell for debugging"
+            echo "  --env, -e KEY=VAL Set environment variable in container"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
+            echo ""
+            echo "Environment Variables:"
+            echo "  - Automatically loads .env file if present"
+            echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
+            echo "  - Use --env to set custom variables"
             echo ""
             echo "Requirements:"
             echo "  - Docker installed and running"
