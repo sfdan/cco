@@ -1,0 +1,21 @@
+# Development logs and private notes
+claude.local.md
+PROJECT_LOG.md
+devlog/
+
+# Credential staging area
+.claudito_creds/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
