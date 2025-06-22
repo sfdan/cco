@@ -91,7 +91,20 @@ build_image() {
     local host_gid=$(id -g)
     
     log "Building claudito Docker image..."
-    docker build -t "$IMAGE_NAME" --build-arg HOST_UID="$host_uid" --build-arg HOST_GID="$host_gid" "$SCRIPT_DIR"
+    
+    local build_args=(
+        --build-arg HOST_UID="$host_uid"
+        --build-arg HOST_GID="$host_gid"
+    )
+    
+    # Add custom packages if specified
+    if [[ ${#custom_packages[@]} -gt 0 ]]; then
+        local packages_list=$(IFS=' '; echo "${custom_packages[*]}")
+        log "Installing additional packages: $packages_list"
+        build_args+=(--build-arg CUSTOM_PACKAGES="$packages_list")
+    fi
+    
+    docker build -t "$IMAGE_NAME" "${build_args[@]}" "$SCRIPT_DIR"
     log "Image built successfully"
 }
 
@@ -165,6 +178,21 @@ run_container() {
     # Load .env file if it exists
     [ -f ".env" ] && docker_args+=(--env-file .env)
     
+    # Enable Docker access if requested
+    if [ "$docker_access" = true ]; then
+        # Check for Docker socket locations (Linux and macOS with Docker Desktop)
+        if [ -S "/var/run/docker.sock" ]; then
+            log "Enabling Docker access via /var/run/docker.sock"
+            docker_args+=(-v "/var/run/docker.sock":"/var/run/docker.sock")
+        elif [ -S "$HOME/.docker/run/docker.sock" ]; then
+            log "Enabling Docker access via $HOME/.docker/run/docker.sock"
+            docker_args+=(-v "$HOME/.docker/run/docker.sock":"/var/run/docker.sock")
+        else
+            warn "Docker socket not found - Docker access may not work"
+            warn "Tried: /var/run/docker.sock, $HOME/.docker/run/docker.sock"
+        fi
+    fi
+    
     # Bind mount common config files
     [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"/home/user/.gitconfig:ro")
     [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"/home/user/.ssh:ro")
@@ -186,6 +214,8 @@ rebuild_image=false
 claude_args=()
 shell_mode=false
 custom_env_vars=()
+custom_packages=()
+docker_access=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -205,6 +235,21 @@ while [[ $# -gt 0 ]]; do
             custom_env_vars+=("$2")
             shift 2
             ;;
+        --packages|-p)
+            if [[ $# -lt 2 ]]; then
+                error "--packages requires an argument (package1,package2,...)"
+                exit 1
+            fi
+            IFS=',' read -ra ADDR <<< "$2"
+            for pkg in "${ADDR[@]}"; do
+                custom_packages+=("$pkg")
+            done
+            shift 2
+            ;;
+        --docker)
+            docker_access=true
+            shift
+            ;;
         --help|-h)
             echo "claudito - Secure Claude Code Container"
             echo ""
@@ -214,6 +259,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --rebuild         Force rebuild of Docker image"
             echo "  --shell           Start interactive shell for debugging"
             echo "  --env, -e KEY=VAL Set environment variable in container"
+            echo "  --packages, -p    Install additional apt packages (comma-separated)"
+            echo "  --docker          Enable Docker access (bind mount Docker socket)"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
@@ -243,9 +290,13 @@ main() {
     check_docker
     setup_credentials
     
-    # Rebuild image if requested or if image doesn't exist
-    if [ "$rebuild_image" = true ]; then
-        log "Rebuilding claudito image..."
+    # Rebuild image if requested, custom packages specified, or if image doesn't exist
+    if [ "$rebuild_image" = true ] || [ ${#custom_packages[@]} -gt 0 ]; then
+        if [ ${#custom_packages[@]} -gt 0 ]; then
+            log "Custom packages specified, rebuilding image..."
+        else
+            log "Rebuilding claudito image..."
+        fi
         docker image rm "$IMAGE_NAME" &> /dev/null || true
         build_image
     elif ! docker image inspect "$IMAGE_NAME" &> /dev/null; then

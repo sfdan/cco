@@ -34,6 +34,14 @@ RUN npm install -g @anthropic-ai/claude-code
 # Create symlinks for fd (some systems call it fdfind)
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
+# Install custom packages if specified
+ARG CUSTOM_PACKAGES=""
+RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y $CUSTOM_PACKAGES && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Create user with dynamic UID/GID (will be overridden at runtime)
 ARG HOST_UID=1000
 ARG HOST_GID=1000

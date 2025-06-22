@@ -91,6 +91,12 @@ claudito --shell
 # Set environment variables
 claudito --env API_KEY=sk-123 --env DEBUG=1
 
+# Install additional packages
+claudito --packages terraform,ansible,helm
+
+# Enable Docker access for Docker-in-Docker workflows
+claudito --docker
+
 # Use .env file (automatic if present)
 echo "DEBUG=1" > .env
 claudito
@@ -117,6 +123,47 @@ You can also:
 - Add custom variables: `claudito --env CUSTOM_VAR=value`
 - Use .env files: Create `.env` in your project directory
 - Pass host variables: `claudito --env CUSTOM_VAR` (inherits from host)
+
+### Custom Packages
+
+Add your favorite CLI tools to the container:
+
+```bash
+# Install specific packages
+claudito --packages terraform,kubectl,ansible
+
+# Multiple packages for infrastructure work
+claudito --packages "aws-cli,terraform,helm,jq"
+```
+
+**Note**: Custom packages trigger an automatic image rebuild and are installed via `apt-get`.
+
+### Docker Access
+
+Enable Docker-in-Docker for containerized development workflows:
+
+```bash
+# Enable Docker access inside claudito
+claudito --docker
+
+# Now Claude can run docker commands, build images, etc.
+claudito --docker "help me containerize this app"
+```
+
+**Note**: This bind mounts your host Docker socket, allowing Claude to manage containers on your host system. Use with appropriate caution.
+
+### Advanced: Custom Dockerfile
+
+For complex customizations, you can modify the Dockerfile directly:
+
+```dockerfile
+# Add after the existing RUN commands
+RUN curl -fsSL https://get.docker.com | sh  # Install Docker
+RUN npm install -g some-node-tool           # Node.js tools
+RUN pip3 install some-python-package        # Python packages
+```
+
+Then rebuild: `claudito --rebuild`
 
 ## Requirements
 
