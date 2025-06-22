@@ -31,8 +31,23 @@ GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/master"
 INSTALL_DIR="/usr/local/bin"
 INSTALL_PATH="${INSTALL_DIR}/claudito"
 
-# Check if running as root for system install
+# Check permissions and determine best install location
 check_permissions() {
+    # Prefer $HOME/bin if it's in PATH (common convention)
+    if [[ ":$PATH:" == *":$HOME/bin:"* ]] && [[ -d "$HOME/bin" || -w "$HOME" ]]; then
+        INSTALL_DIR="$HOME/bin"
+        INSTALL_PATH="${INSTALL_DIR}/claudito"
+        
+        if [[ ! -d "$INSTALL_DIR" ]]; then
+            log "Creating $HOME/bin directory"
+            mkdir -p "$INSTALL_DIR"
+        fi
+        
+        log "Installing claudito to ${INSTALL_PATH} (user bin)"
+        return 0
+    fi
+    
+    # Check if running as root for system install
     if [[ $EUID -eq 0 ]]; then
         log "Installing claudito system-wide to ${INSTALL_PATH}"
         return 0
@@ -44,7 +59,7 @@ check_permissions() {
         return 0
     fi
     
-    # Fallback to local install
+    # Fallback to ~/.local/bin
     INSTALL_DIR="$HOME/.local/bin"
     INSTALL_PATH="${INSTALL_DIR}/claudito"
     
@@ -142,7 +157,7 @@ show_usage() {
     info ""
     
     # Check if install dir is in PATH
-    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]] && [[ "$INSTALL_DIR" != "/usr/local/bin" ]]; then
+    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]] && [[ "$INSTALL_DIR" != "/usr/local/bin" ]] && [[ "$INSTALL_DIR" != "$HOME/bin" ]]; then
         warn "⚠️  ${INSTALL_DIR} is not in your PATH"
         warn "   Add this to your shell profile (.bashrc, .zshrc, etc.):"
         warn "   ${BLUE}export PATH=\"\$PATH:${INSTALL_DIR}\"${NC}"
