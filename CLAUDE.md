@@ -30,7 +30,7 @@ A minimal, secure way to run Claude Code in a Docker container with proper authe
 ### Testing Container Environment
 ```bash
 # Run one-off commands inside container
-./claudito --shell env | grep CLAUDE
+./claudito --shell 'env | grep CLAUDE'
 
 # Test Claude Code non-interactively
 ./claudito "what is 2+2?"
@@ -38,6 +38,31 @@ A minimal, secure way to run Claude Code in a Docker container with proper authe
 # Debug configuration
 ./claudito --shell "ls -la ~/.claude"
 ```
+
+### Development Sanity Check Suite
+
+Before committing major changes, always run this test suite:
+
+```bash
+# 1. Basic functionality
+./claudito "what is 2+2?"
+
+# 2. Shell mode
+./claudito --shell whoami
+./claudito --shell 'echo "HOME: $HOME" && id && pwd'
+
+# 3. UV/Python environment
+./claudito --shell 'uv --version'
+./claudito --shell 'cd /tmp && uv init test-sanity && cd test-sanity && ls -la'
+
+# 4. Claude Code integration
+./claudito "create a simple Python project with uv"
+
+# 5. Rebuild capability
+./claudito --rebuild
+```
+
+**Success criteria**: No permission errors, no authentication prompts, no hanging, proper user identity and environment.
 
 ### DO NOT attempt:
 - Interactive shells expecting responses
