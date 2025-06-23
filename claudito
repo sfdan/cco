@@ -2,7 +2,15 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Determine if we're running from installation or development
+if [[ -d "$HOME/.local/share/claudito/.git" && "$(basename "$(dirname "$0")")" != "claudito" ]]; then
+    # Running from symlink, use installation directory
+    CLAUDITO_INSTALLATION_DIR="$HOME/.local/share/claudito"
+else
+    # Running from development directory
+    CLAUDITO_INSTALLATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
 IMAGE_NAME="claudito:latest"
 CONTAINER_NAME="claudito-$(basename "$PWD")"
 
@@ -82,14 +90,14 @@ setup_system_credentials() {
     
     local claude_config_dir=$(find_claude_config_dir)
     
-    # Clean up any existing system config staging area
-    rm -rf "$SCRIPT_DIR/.claude-system"
-    mkdir -p "$SCRIPT_DIR/.claude-system"
+    # Clean up any existing system config staging area in installation directory
+    rm -rf "$CLAUDITO_INSTALLATION_DIR/.claude-system"
+    mkdir -p "$CLAUDITO_INSTALLATION_DIR/.claude-system"
     
     # Copy system Claude configuration directory if it exists
     if [ -d "$claude_config_dir" ]; then
         log "Copying system Claude Code configuration from $claude_config_dir"
-        cp -r "$claude_config_dir"/* "$SCRIPT_DIR/.claude-system/" 2>/dev/null || true
+        cp -r "$claude_config_dir"/* "$CLAUDITO_INSTALLATION_DIR/.claude-system/" 2>/dev/null || true
     else
         error "No Claude Code configuration found at $claude_config_dir"
         error "Please run 'claude' first to authenticate, then try again."
@@ -120,9 +128,9 @@ setup_system_credentials() {
         log "Copying .claude.json with OAuth account info"
         # Extract minimal OAuth info for fresh start, or copy full file
         if command -v jq &> /dev/null; then
-            jq '{oauthAccount: .oauthAccount, hasCompletedOnboarding: true, lastOnboardingVersion: "1.0.31"}' "$HOME/.claude.json" > "$SCRIPT_DIR/.claude-system/.claude.json" 2>/dev/null || cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude-system/.claude.json"
+            jq '{oauthAccount: .oauthAccount, hasCompletedOnboarding: true, lastOnboardingVersion: "1.0.31"}' "$HOME/.claude.json" > "$CLAUDITO_INSTALLATION_DIR/.claude-system/.claude.json" 2>/dev/null || cp "$HOME/.claude.json" "$CLAUDITO_INSTALLATION_DIR/.claude-system/.claude.json"
         else
-            cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude-system/.claude.json"
+            cp "$HOME/.claude.json" "$CLAUDITO_INSTALLATION_DIR/.claude-system/.claude.json"
         fi
     fi
     
@@ -133,8 +141,16 @@ setup_system_credentials() {
 build_image() {
     local host_uid=$(id -u)
     local host_gid=$(id -g)
+    local original_dir="$PWD"
     
     log "Building claudito Docker image..."
+    
+    # Always build from installation directory
+    cd "$CLAUDITO_INSTALLATION_DIR" || {
+        error "Claudito installation not found at $CLAUDITO_INSTALLATION_DIR"
+        error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
+        exit 1
+    }
     
     local build_args=(
         --build-arg HOST_UID="$host_uid"
@@ -148,8 +164,65 @@ build_image() {
         build_args+=(--build-arg CUSTOM_PACKAGES="$packages_list")
     fi
     
-    docker build -t "$IMAGE_NAME" "${build_args[@]}" "$SCRIPT_DIR"
+    docker build -t "$IMAGE_NAME" "${build_args[@]}" .
+    cd "$original_dir"
     log "Image built successfully"
+}
+
+# Update claudito installation
+update_claudito() {
+    if [[ ! -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        error "Claudito installation not found at $CLAUDITO_INSTALLATION_DIR"
+        error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
+        exit 1
+    fi
+    
+    local original_dir="$PWD"
+    cd "$CLAUDITO_INSTALLATION_DIR"
+    
+    log "Updating claudito installation..."
+    
+    # Check for local modifications
+    if ! git diff --quiet HEAD 2>/dev/null; then
+        warn "WARNING: Your claudito installation has local modifications."
+        warn "Most users should reset to the latest version (this is safe)."
+        warn "Only say 'no' if you've customized claudito yourself."
+        echo
+        read -p "Reset to latest version and lose local changes? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            warn "Skipping update to preserve local changes"
+            cd "$original_dir"
+            return 1
+        fi
+        log "Resetting to latest version..."
+        git reset --hard origin/master
+    fi
+    
+    git fetch origin
+    git pull origin master
+    local new_version=$(git rev-parse --short HEAD)
+    log "Updated to $new_version"
+    
+    log "Rebuilding Docker image with latest changes..."
+    build_image
+    
+    cd "$original_dir"
+    log "Update complete!"
+}
+
+# Show version information
+show_version() {
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local version=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        local install_type="installation"
+    else
+        local version="dev"
+        local install_type="development"
+    fi
+    
+    echo "claudito $version ($install_type)"
+    echo "Installation: $CLAUDITO_INSTALLATION_DIR"
 }
 
 # Main run function
@@ -311,6 +384,14 @@ while [[ $# -gt 0 ]]; do
             rebuild_image=true
             shift
             ;;
+        update)
+            update_claudito
+            exit 0
+            ;;
+        --version|-v)
+            show_version
+            exit 0
+            ;;
         --shell)
             shell_mode=true
             shift
@@ -345,6 +426,8 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --rebuild         Force rebuild of Docker image"
+            echo "  update            Update claudito to latest version"
+            echo "  --version, -v     Show version information"
             echo "  --shell           Start interactive shell for debugging"
             echo "  --env, -e KEY=VAL Set environment variable in container"
             echo "  --packages, -p    Install additional apt packages (comma-separated)"

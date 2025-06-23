@@ -27,51 +27,24 @@ info() {
 
 # Configuration
 GITHUB_REPO="nikvdp/claudito"
-GITHUB_RAW_URL="${CLAUDITO_INSTALL_URL:-https://raw.githubusercontent.com/${GITHUB_REPO}/master}"
-INSTALL_DIR="/usr/local/bin"
-INSTALL_PATH="${INSTALL_DIR}/claudito"
+GITHUB_URL="https://github.com/${GITHUB_REPO}.git"
+CLAUDITO_INSTALLATION_DIR="$HOME/.local/share/claudito"
 
-# Check permissions and determine best install location
-check_permissions() {
-    # Prefer $HOME/bin if it's in PATH (common convention)
-    if [[ ":$PATH:" == *":$HOME/bin:"* ]] && [[ -d "$HOME/bin" || -w "$HOME" ]]; then
-        INSTALL_DIR="$HOME/bin"
-        INSTALL_PATH="${INSTALL_DIR}/claudito"
-        
-        if [[ ! -d "$INSTALL_DIR" ]]; then
-            log "Creating $HOME/bin directory"
-            mkdir -p "$INSTALL_DIR"
-        fi
-        
-        log "Installing claudito to ${INSTALL_PATH} (user bin)"
-        return 0
+# Determine symlink location using smart strategy
+determine_symlink_location() {
+    # Smart symlink strategy: use ~/bin if user already has it in PATH
+    if [[ -d "$HOME/bin" && ":$PATH:" == *":$HOME/bin:"* ]]; then
+        SYMLINK_DIR="$HOME/bin"
+        NEEDS_SUDO=false
+        log "Using existing ~/bin directory"
+    else
+        # Use system location, requires sudo
+        SYMLINK_DIR="/usr/local/bin"
+        NEEDS_SUDO=true
+        log "Using /usr/local/bin (requires sudo)"
     fi
     
-    # Check if running as root for system install
-    if [[ $EUID -eq 0 ]]; then
-        log "Installing claudito system-wide to ${INSTALL_PATH}"
-        return 0
-    fi
-    
-    # Check if we can write to /usr/local/bin
-    if [[ -w "$INSTALL_DIR" ]]; then
-        log "Installing claudito to ${INSTALL_PATH}"
-        return 0
-    fi
-    
-    # Fallback to ~/.local/bin
-    INSTALL_DIR="$HOME/.local/bin"
-    INSTALL_PATH="${INSTALL_DIR}/claudito"
-    
-    if [[ ! -d "$INSTALL_DIR" ]]; then
-        log "Creating local bin directory: ${INSTALL_DIR}"
-        mkdir -p "$INSTALL_DIR"
-    fi
-    
-    warn "Installing claudito to ${INSTALL_PATH} (user local)"
-    warn "Make sure ${INSTALL_DIR} is in your PATH"
-    
-    return 0
+    SYMLINK_PATH="${SYMLINK_DIR}/claudito"
 }
 
 # Check prerequisites
@@ -81,8 +54,8 @@ check_prerequisites() {
     # Check for required tools
     local missing_tools=()
     
-    if ! command -v curl &> /dev/null; then
-        missing_tools+=("curl")
+    if ! command -v git &> /dev/null; then
+        missing_tools+=("git")
     fi
     
     if ! command -v docker &> /dev/null; then
@@ -105,41 +78,95 @@ check_prerequisites() {
     log "Prerequisites check passed"
 }
 
-# Download and install claudito
-install_claudito() {
-    log "Downloading claudito from ${GITHUB_RAW_URL}/claudito..."
-    
-    # Download claudito script
-    if ! curl -fsSL "${GITHUB_RAW_URL}/claudito" -o "${INSTALL_PATH}.tmp"; then
-        error "Failed to download claudito script"
-        if [[ -n "$CLAUDITO_INSTALL_URL" ]]; then
-            error "Please check your custom server is running at ${CLAUDITO_INSTALL_URL}"
-        else
-            error "Please check your internet connection and try again."
-        fi
-        exit 1
+# Clone or update claudito installation
+install_or_update_claudito() {
+    # Determine if we're in a claudito repo
+    if [[ -f "claudito" && -f "Dockerfile" ]]; then
+        log "Running from claudito development directory"
+        INSTALL_MODE="dev"
+    else
+        log "Running standalone installation"
+        INSTALL_MODE="standalone"
     fi
     
-    # Make executable
-    chmod +x "${INSTALL_PATH}.tmp"
+    # Clone/update claudito installation
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        log "Updating existing claudito installation..."
+        cd "$CLAUDITO_INSTALLATION_DIR"
+        
+        # Check for local modifications
+        if ! git diff --quiet HEAD 2>/dev/null; then
+            warn "WARNING: Your claudito installation has local modifications."
+            warn "Most users should reset to the latest version (this is safe)."
+            warn "Only say 'no' if you've customized claudito yourself."
+            echo
+            read -p "Reset to latest version and lose local changes? [Y/n] " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                warn "Skipping update to preserve local changes"
+                cd - > /dev/null
+                return 0
+            fi
+            log "Resetting to latest version..."
+            git reset --hard origin/master
+        fi
+        
+        git fetch origin
+        git pull origin master
+        CURRENT_VERSION=$(git rev-parse --short HEAD)
+        log "Updated to $CURRENT_VERSION"
+        cd - > /dev/null
+    else
+        log "Installing claudito to $CLAUDITO_INSTALLATION_DIR..."
+        mkdir -p "$(dirname "$CLAUDITO_INSTALLATION_DIR")"
+        
+        if ! git clone "$GITHUB_URL" "$CLAUDITO_INSTALLATION_DIR"; then
+            error "Failed to clone claudito repository"
+            error "Please check your internet connection and try again."
+            exit 1
+        fi
+        
+        CURRENT_VERSION=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD)
+        log "Installed claudito $CURRENT_VERSION"
+    fi
+}
+
+# Create symlink
+create_symlink() {
+    log "Creating symlink..."
     
-    # Move to final location
-    mv "${INSTALL_PATH}.tmp" "${INSTALL_PATH}"
-    
-    log "claudito installed successfully to ${INSTALL_PATH}"
+    # Create symlink with appropriate permissions
+    if [[ "$NEEDS_SUDO" == "true" ]]; then
+        if ! sudo ln -sf "$CLAUDITO_INSTALLATION_DIR/claudito" "$SYMLINK_PATH"; then
+            error "Failed to create symlink with sudo"
+            exit 1
+        fi
+        log "Created symlink at $SYMLINK_PATH (used sudo)"
+    else
+        if ! ln -sf "$CLAUDITO_INSTALLATION_DIR/claudito" "$SYMLINK_PATH"; then
+            error "Failed to create symlink"
+            exit 1
+        fi
+        log "Created symlink at $SYMLINK_PATH"
+    fi
 }
 
 # Verify installation
 verify_installation() {
     log "Verifying installation..."
     
-    if [[ ! -x "$INSTALL_PATH" ]]; then
-        error "Installation verification failed: ${INSTALL_PATH} is not executable"
+    if [[ ! -x "$CLAUDITO_INSTALLATION_DIR/claudito" ]]; then
+        error "Installation verification failed: claudito script is not executable"
+        exit 1
+    fi
+    
+    if [[ ! -L "$SYMLINK_PATH" ]]; then
+        error "Installation verification failed: symlink was not created"
         exit 1
     fi
     
     # Try to run claudito --help
-    if ! "$INSTALL_PATH" --help &> /dev/null; then
+    if ! "$SYMLINK_PATH" --help &> /dev/null; then
         error "Installation verification failed: claudito --help failed"
         exit 1
     fi
@@ -152,20 +179,19 @@ show_usage() {
     info ""
     info "🎉 Claudito installation complete!"
     info ""
+    info "📍 Installation details:"
+    info "  • Files: ${BLUE}$CLAUDITO_INSTALLATION_DIR${NC}"
+    info "  • Command: ${BLUE}$SYMLINK_PATH${NC}"
+    info "  • Version: ${BLUE}$CURRENT_VERSION${NC}"
+    info ""
     info "📋 Next steps:"
     info "  1. Make sure Claude Code is authenticated: ${BLUE}claude${NC}"
     info "  2. Run claudito in any project directory: ${BLUE}claudito${NC}"
     info "  3. For help: ${BLUE}claudito --help${NC}"
+    info "  4. To update: ${BLUE}claudito update${NC}"
     info ""
     info "📖 Documentation: https://github.com/${GITHUB_REPO}"
     info ""
-    
-    # Check if install dir is in PATH
-    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]] && [[ "$INSTALL_DIR" != "/usr/local/bin" ]] && [[ "$INSTALL_DIR" != "$HOME/bin" ]]; then
-        warn "⚠️  ${INSTALL_DIR} is not in your PATH"
-        warn "   Add this to your shell profile (.bashrc, .zshrc, etc.):"
-        warn "   ${BLUE}export PATH=\"\$PATH:${INSTALL_DIR}\"${NC}"
-    fi
 }
 
 # Main installation function
@@ -174,8 +200,9 @@ main() {
     info ""
     
     check_prerequisites
-    check_permissions
-    install_claudito
+    determine_symlink_location
+    install_or_update_claudito
+    create_symlink
     verify_installation
     show_usage
 }
@@ -187,7 +214,10 @@ case "${1:-}" in
         echo ""
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
         echo ""
-        echo "This script will install claudito to /usr/local/bin (if writable) or ~/.local/bin"
+        echo "This script will:"
+        echo "  • Clone claudito to ~/.local/share/claudito"
+        echo "  • Create symlink in ~/bin (if in PATH) or /usr/local/bin"
+        echo "  • Enable global claudito usage from any directory"
         echo ""
         echo "Options:"
         echo "  --help, -h    Show this help message"
