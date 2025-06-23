@@ -555,7 +555,13 @@ run_container() {
 
 	# Run the container (entrypoint will handle user setup)
 	if [[ "$shell_mode" = true ]]; then
-		docker run "${docker_args[@]}" "$IMAGE_NAME" bash
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			# Interactive shell mode
+			docker run "${docker_args[@]}" "$IMAGE_NAME" bash
+		else
+			# Shell command mode - execute the provided command
+			docker run "${docker_args[@]}" "$IMAGE_NAME" bash -c "${claude_args[*]}"
+		fi
 	else
 		if [[ ${#claude_args[@]} -eq 0 ]]; then
 			docker run "${docker_args[@]}" "$IMAGE_NAME"
@@ -594,6 +600,11 @@ while [[ $# -gt 0 ]]; do
 	--shell)
 		shell_mode=true
 		shift
+		# Collect remaining arguments as shell command
+		while [[ $# -gt 0 ]]; do
+			claude_args+=("$1")
+			shift
+		done
 		;;
 	--env | -e)
 		if [[ $# -lt 2 ]]; then
@@ -628,7 +639,7 @@ while [[ $# -gt 0 ]]; do
 		echo "  --self-update     Update claudito to latest version"
 		echo "  --version, -v     Show version information"
 		echo "  --info            Show system information and readiness status"
-		echo "  --shell           Start interactive shell for debugging"
+		echo "  --shell [cmd...]  Start interactive shell or run shell command"
 		echo "  --env, -e KEY=VAL Set environment variable in container"
 		echo "  --packages, -p    Install additional apt packages into container"
 		echo "  --docker          Enable Docker access (bind mount Docker socket)"
