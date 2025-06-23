@@ -225,6 +225,143 @@ show_version() {
     echo "Installation: $CLAUDITO_INSTALLATION_DIR"
 }
 
+# Show comprehensive system information and status
+show_info() {
+    echo "claudito - System Information & Status"
+    echo "======================================"
+    echo
+    
+    # Version info
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local version=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        local install_type="installation"
+        local git_status=$(cd "$CLAUDITO_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
+    else
+        local version="dev"
+        local install_type="development"
+        local git_status=""
+    fi
+    
+    echo "📦 Claudito Information:"
+    echo "  Version: $version ($install_type)"
+    echo "  Location: $CLAUDITO_INSTALLATION_DIR"
+    if [[ -n "$git_status" ]]; then
+        echo "  Git Status: Modified (local changes present)"
+    elif [[ "$install_type" == "installation" ]]; then
+        echo "  Git Status: Clean"
+    fi
+    echo
+    
+    # Docker status
+    echo "🐳 Docker Status:"
+    if command -v docker &> /dev/null; then
+        echo "  Docker CLI: ✓ Available"
+        if docker info &> /dev/null; then
+            local docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+            echo "  Docker Daemon: ✓ Running (v$docker_version)"
+            
+            # Check if our image exists
+            if docker image inspect "$IMAGE_NAME" &> /dev/null; then
+                local image_created=$(docker image inspect "$IMAGE_NAME" --format '{{.Created}}' | cut -d'T' -f1)
+                echo "  Claudito Image: ✓ Built ($image_created)"
+            else
+                echo "  Claudito Image: ✗ Not built (run with --rebuild)"
+            fi
+        else
+            echo "  Docker Daemon: ✗ Not running"
+        fi
+    else
+        echo "  Docker CLI: ✗ Not installed"
+    fi
+    echo
+    
+    # Claude Code authentication status
+    echo "🤖 Claude Code Status:"
+    if command -v claude &> /dev/null; then
+        local claude_version=$(claude --version 2>/dev/null | head -1 || echo "unknown")
+        echo "  Claude CLI: ✓ Available ($claude_version)"
+        
+        # Check authentication
+        local claude_config_dir=$(find_claude_config_dir)
+        if [ -d "$claude_config_dir" ]; then
+            echo "  Config Directory: ✓ Found ($claude_config_dir)"
+            
+            # Check credentials
+            local auth_status="✗ Not authenticated"
+            if command -v security &> /dev/null; then
+                if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
+                    auth_status="✓ Authenticated (Keychain)"
+                fi
+            elif [ -f "$claude_config_dir/.credentials.json" ]; then
+                auth_status="✓ Authenticated (File)"
+            fi
+            echo "  Authentication: $auth_status"
+        else
+            echo "  Config Directory: ✗ Not found"
+            echo "  Authentication: ✗ Not configured"
+        fi
+    else
+        echo "  Claude CLI: ✗ Not installed"
+        echo "  Authentication: ✗ Cannot check"
+    fi
+    echo
+    
+    # System info
+    echo "💻 System Information:"
+    echo "  OS: $(uname -s) $(uname -r)"
+    echo "  Architecture: $(uname -m)"
+    echo "  User: $(whoami)"
+    echo "  UID/GID: $(id -u):$(id -g)"
+    echo
+    
+    # Overall status
+    echo "🎯 Overall Status:"
+    local ready=true
+    local issues=()
+    
+    if ! command -v docker &> /dev/null; then
+        ready=false
+        issues+=("Docker not installed")
+    elif ! docker info &> /dev/null; then
+        ready=false
+        issues+=("Docker daemon not running")
+    fi
+    
+    if ! command -v claude &> /dev/null; then
+        ready=false
+        issues+=("Claude Code not installed")
+    else
+        local claude_config_dir=$(find_claude_config_dir)
+        if [ ! -d "$claude_config_dir" ]; then
+            ready=false
+            issues+=("Claude Code not configured")
+        else
+            local auth_ok=false
+            if command -v security &> /dev/null; then
+                if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
+                    auth_ok=true
+                fi
+            elif [ -f "$claude_config_dir/.credentials.json" ]; then
+                auth_ok=true
+            fi
+            if [ "$auth_ok" = false ]; then
+                ready=false
+                issues+=("Claude Code not authenticated")
+            fi
+        fi
+    fi
+    
+    if [ "$ready" = true ]; then
+        echo "  Status: ✓ Ready to use claudito"
+    else
+        echo "  Status: ✗ Issues found"
+        echo "  Issues:"
+        for issue in "${issues[@]}"; do
+            echo "    - $issue"
+        done
+    fi
+}
+
 # Main run function
 run_container() {
     local host_uid=$(id -u)
@@ -392,6 +529,10 @@ while [[ $# -gt 0 ]]; do
             show_version
             exit 0
             ;;
+        --info)
+            show_info
+            exit 0
+            ;;
         --shell)
             shell_mode=true
             shift
@@ -428,6 +569,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --rebuild         Force rebuild of Docker image"
             echo "  --self-update     Update claudito to latest version"
             echo "  --version, -v     Show version information"
+            echo "  --info            Show system information and readiness status"
             echo "  --shell           Start interactive shell for debugging"
             echo "  --env, -e KEY=VAL Set environment variable in container"
             echo "  --packages, -p    Install additional apt packages into container"
