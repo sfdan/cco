@@ -9,8 +9,8 @@ devlog/
 # Claudito home directory
 .claudito/
 
-# Extracted credentials for Docker build
-.claude/
+# Extracted system config for Docker build (no credentials)
+.claude-system/
 
 # System files
 .DS_Store

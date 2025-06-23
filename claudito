@@ -37,34 +37,78 @@ check_docker() {
     fi
 }
 
-# Extract Claude Code configuration to .claude directory for Docker build
-setup_credentials() {
-    log "Setting up Claude Code configuration..."
+# Determine Claude Code config directory following priority order:
+# 1. CLAUDE_CONFIG_DIR env var (if set)
+# 2. XDG_CONFIG_HOME/claude or ~/.config/claude (new default since v1.0.30)
+# 3. ~/.claude (legacy fallback)
+get_claude_config_dir() {
+    if [ -n "$CLAUDE_CONFIG_DIR" ]; then
+        echo "$CLAUDE_CONFIG_DIR"
+    elif [ -n "$XDG_CONFIG_HOME" ]; then
+        echo "$XDG_CONFIG_HOME/claude"
+    elif [ -d "$HOME/.config" ]; then
+        echo "$HOME/.config/claude"
+    else
+        echo "$HOME/.claude"
+    fi
+}
+
+# Find where Claude Code actually stores its configuration
+find_claude_config_dir() {
+    local primary_dir=$(get_claude_config_dir)
+    local legacy_dir="$HOME/.claude"
     
-    # Clean up any existing .claude directory
-    rm -rf "$SCRIPT_DIR/.claude"
-    mkdir -p "$SCRIPT_DIR/.claude"
-    
-    # Copy entire ~/.claude directory if it exists (commands, projects, todos, etc.)
-    if [ -d "$HOME/.claude" ]; then
-        log "Copying Claude Code configuration from ~/.claude"
-        cp -r "$HOME/.claude"/* "$SCRIPT_DIR/.claude/" 2>/dev/null || true
+    # Check primary location first
+    if [ -d "$primary_dir" ] && [ -f "$primary_dir/.credentials.json" -o -n "$(command -v security)" ]; then
+        echo "$primary_dir"
+        return
     fi
     
-    # Extract fresh credentials from macOS Keychain (overrides any existing)
+    # Fall back to legacy location
+    if [ -d "$legacy_dir" ] && [ -f "$legacy_dir/.credentials.json" -o -n "$(command -v security)" ]; then
+        echo "$legacy_dir"
+        return
+    fi
+    
+    # Return primary location for error reporting
+    echo "$primary_dir"
+}
+
+# Extract system Claude Code configuration for Docker build
+# CRITICAL: This copies SYSTEM config to .claude-system/ (not .claude/)
+# to avoid corrupting project-specific .claude/ directories
+setup_system_credentials() {
+    log "Setting up system Claude Code configuration..."
+    
+    local claude_config_dir=$(find_claude_config_dir)
+    
+    # Clean up any existing system config staging area
+    rm -rf "$SCRIPT_DIR/.claude-system"
+    mkdir -p "$SCRIPT_DIR/.claude-system"
+    
+    # Copy system Claude configuration directory if it exists
+    if [ -d "$claude_config_dir" ]; then
+        log "Copying system Claude Code configuration from $claude_config_dir"
+        cp -r "$claude_config_dir"/* "$SCRIPT_DIR/.claude-system/" 2>/dev/null || true
+    else
+        error "No Claude Code configuration found at $claude_config_dir"
+        error "Please run 'claude' first to authenticate, then try again."
+        exit 1
+    fi
+    
+    # IMPORTANT: Do NOT copy credentials to avoid baking them into Docker image
+    # Credentials will be mounted at runtime from Keychain or host files
+    
+    # Verify credentials exist but don't copy them
     if command -v security &> /dev/null; then
-        log "Extracting fresh credentials from macOS Keychain..."
-        if KEYCHAIN_CREDENTIALS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null); then
-            echo "$KEYCHAIN_CREDENTIALS" > "$SCRIPT_DIR/.claude/.credentials.json"
-            log "Fresh credentials extracted from macOS Keychain"
-        else
+        if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
             error "No Claude Code credentials found in macOS Keychain"
             error "Please run 'claude' first to authenticate, then try again."
             exit 1
         fi
-    elif [ -f "$HOME/.claude/.credentials.json" ]; then
-        log "Using existing Claude Code credentials file"
-        # Already copied above, no need to do anything
+        log "Verified Claude Code credentials in macOS Keychain"
+    elif [ -f "$claude_config_dir/.credentials.json" ]; then
+        log "Verified existing Claude Code credentials file"
     else
         error "No Claude Code credentials found!"
         error "Please run 'claude' first to authenticate, then try again."
@@ -76,13 +120,13 @@ setup_credentials() {
         log "Copying .claude.json with OAuth account info"
         # Extract minimal OAuth info for fresh start, or copy full file
         if command -v jq &> /dev/null; then
-            jq '{oauthAccount: .oauthAccount, hasCompletedOnboarding: true, lastOnboardingVersion: "1.0.31"}' "$HOME/.claude.json" > "$SCRIPT_DIR/.claude/.claude.json" 2>/dev/null || cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude/.claude.json"
+            jq '{oauthAccount: .oauthAccount, hasCompletedOnboarding: true, lastOnboardingVersion: "1.0.31"}' "$HOME/.claude.json" > "$SCRIPT_DIR/.claude-system/.claude.json" 2>/dev/null || cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude-system/.claude.json"
         else
-            cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude/.claude.json"
+            cp "$HOME/.claude.json" "$SCRIPT_DIR/.claude-system/.claude.json"
         fi
     fi
     
-    log "Claude Code configuration prepared for container build"
+    log "System Claude Code configuration prepared for container build"
 }
 
 # Build Docker image
@@ -141,6 +185,7 @@ run_container() {
         "ANTHROPIC_API_KEY"
         "ANTHROPIC_BASE_URL" 
         "CLAUDE_CONFIG_DIR"
+        "XDG_CONFIG_HOME"
         "NO_COLOR"
         "TERM"
         "COLORTERM"
@@ -193,7 +238,16 @@ run_container() {
         fi
     fi
     
-    # Extract fresh credentials from Keychain and mount over build-time copy
+    # Set up Claude Code configuration hierarchy in container
+    local host_system_claude_dir=$(find_claude_config_dir)
+    local container_system_claude_dir="/home/user/.claude"
+    local project_claude_dir="$current_dir/.claude"
+    
+    # Set CLAUDE_CONFIG_DIR for the container to use the home directory
+    docker_args+=(-e "CLAUDE_CONFIG_DIR=$container_system_claude_dir")
+    
+    # Extract fresh credentials from Keychain and mount individual files
+    # IMPORTANT: Mount individual files to avoid directory mount precedence issues
     if command -v security &> /dev/null; then
         log "Mounting fresh credentials from macOS Keychain..."
         TEMP_CREDS_DIR="/tmp/claudito-creds-$$"
@@ -201,7 +255,7 @@ run_container() {
         
         if KEYCHAIN_CREDENTIALS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null); then
             echo "$KEYCHAIN_CREDENTIALS" > "$TEMP_CREDS_DIR/.credentials.json"
-            docker_args+=(-v "$TEMP_CREDS_DIR/.credentials.json":"/home/user/.claude/.credentials.json:ro")
+            docker_args+=(-v "$TEMP_CREDS_DIR/.credentials.json":"$container_system_claude_dir/.credentials.json:ro")
             log "Fresh credentials mounted from macOS Keychain"
             
             # Clean up temp directory on exit
@@ -209,14 +263,22 @@ run_container() {
         fi
     fi
     
-    # Mount live settings to pick up vim mode and other preferences
-    if [ -f "$HOME/.claude/settings.json" ]; then
-        docker_args+=(-v "$HOME/.claude/settings.json":"/home/user/.claude/settings.json:ro")
+    # Mount individual system config files (avoid directory mount conflicts)
+    if [ -f "$host_system_claude_dir/settings.json" ]; then
+        docker_args+=(-v "$host_system_claude_dir/settings.json":"$container_system_claude_dir/settings.json:ro")
+        log "Mounting system settings.json (read-only)"
+    fi
+    
+    # Mount project-specific .claude directory (read-write for project settings)
+    if [ -d "$project_claude_dir" ]; then
+        log "Mounting project Claude config from $project_claude_dir (read-write)"
+        docker_args+=(-v "$project_claude_dir":"$project_claude_dir")
     fi
     
     # Mount .claude.json from home level (contains project paths and UI state)
     if [ -f "$HOME/.claude.json" ]; then
         docker_args+=(-v "$HOME/.claude.json":"/home/user/.claude.json:ro")
+        log "Mounting .claude.json from home directory (read-only)"
     fi
     
     # Bind mount common config files
@@ -314,7 +376,7 @@ main() {
     log "Starting claudito..."
     
     check_docker
-    setup_credentials
+    setup_system_credentials
     
     # Rebuild image if requested, custom packages specified, or if image doesn't exist
     if [ "$rebuild_image" = true ] || [ ${#custom_packages[@]} -gt 0 ]; then

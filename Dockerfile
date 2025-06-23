@@ -52,8 +52,8 @@ RUN useradd -u ${HOST_UID} -g ${HOST_GID} -ms /bin/bash user
 USER user
 WORKDIR /home/user
 
-# Copy Claude configuration from host (extracted by claudito script)
-COPY --chown=user:user .claude/ /home/user/.claude/
+# Copy system Claude configuration from host (extracted by claudito script)
+COPY --chown=user:user .claude-system/ /home/user/.claude/
 
 # Set environment variables
 ENV HOME=/home/user
