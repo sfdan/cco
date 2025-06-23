@@ -209,7 +209,7 @@ show_usage() {
     info "  1. Make sure Claude Code is authenticated"
     info "  2. Run claudito in any project directory: ${BLUE}claudito${NC}"
     info "  3. For help: ${BLUE}claudito --help${NC}"
-    info "  4. To update: ${BLUE}claudito update${NC}"
+    info "  4. To update: ${BLUE}claudito --self-update${NC}"
     info ""
     info "📖 Documentation: https://github.com/${GITHUB_REPO}"
     info ""
