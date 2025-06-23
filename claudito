@@ -94,10 +94,11 @@ setup_system_credentials() {
     rm -rf "$CLAUDITO_INSTALLATION_DIR/.claude-system"
     mkdir -p "$CLAUDITO_INSTALLATION_DIR/.claude-system"
     
-    # Copy system Claude configuration directory if it exists
+    # Copy system Claude configuration directory if it exists (EXCLUDING credentials)
     if [ -d "$claude_config_dir" ]; then
         log "Copying system Claude Code configuration from $claude_config_dir"
-        cp -r "$claude_config_dir"/* "$CLAUDITO_INSTALLATION_DIR/.claude-system/" 2>/dev/null || true
+        # Copy everything EXCEPT credentials (which are mounted at runtime)
+        find "$claude_config_dir" -mindepth 1 -maxdepth 1 ! -name '.credentials.json' -exec cp -r {} "$CLAUDITO_INSTALLATION_DIR/.claude-system/" \; 2>/dev/null || true
     else
         error "No Claude Code configuration found at $claude_config_dir"
         error "Please run \`claude\` and login to authenticate, then try again."
