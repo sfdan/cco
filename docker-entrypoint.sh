@@ -52,5 +52,5 @@ for arg in "$@"; do
     cmd="$cmd '$escaped_arg'"
 done
 
-# Set HOME environment variable and run command
-exec su -s /bin/sh "$USER_NAME" -c "export HOME='$USER_HOME' && cd '$USER_HOME' && $cmd"
+# Set HOME environment variable and run command (preserve working directory)
+exec su -s /bin/sh "$USER_NAME" -c "export HOME='$USER_HOME' && $cmd"
