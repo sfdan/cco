@@ -214,6 +214,11 @@ run_container() {
         docker_args+=(-v "$HOME/.claude/settings.json":"/home/user/.claude/settings.json:ro")
     fi
     
+    # Mount .claude.json from home level (contains project paths and UI state)
+    if [ -f "$HOME/.claude.json" ]; then
+        docker_args+=(-v "$HOME/.claude.json":"/home/user/.claude.json:ro")
+    fi
+    
     # Bind mount common config files
     [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"/home/user/.gitconfig:ro")
     [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"/home/user/.ssh:ro")
