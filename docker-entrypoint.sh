@@ -35,10 +35,15 @@ else
 	USER_HOME=$(getent passwd "$HOST_UID" | cut -d: -f6)
 fi
 
-# Fix ownership of mounted claude files
-if [ -d "$USER_HOME/.claude" ]; then
-	chown -R "$HOST_UID:$HOST_GID" "$USER_HOME/.claude" 2>/dev/null || true
-fi
+# Ensure home directory exists and has correct ownership (for all cases)
+mkdir -p "$USER_HOME" 2>/dev/null || true
+chown "$HOST_UID:$HOST_GID" "$USER_HOME" 2>/dev/null || true
+
+# Create and fix ownership of common cache/config directories
+mkdir -p "$USER_HOME/.cache" "$USER_HOME/.config" "$USER_HOME/.local" 2>/dev/null || true
+chown -R "$HOST_UID:$HOST_GID" "$USER_HOME/.cache" "$USER_HOME/.config" "$USER_HOME/.local" 2>/dev/null || true
+
+# Fix ownership of mounted claude files (but don't recurse deeply on mounted volumes)
 if [ -f "$USER_HOME/.claude.json" ]; then
 	chown "$HOST_UID:$HOST_GID" "$USER_HOME/.claude.json" 2>/dev/null || true
 fi
