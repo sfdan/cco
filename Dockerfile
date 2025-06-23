@@ -50,8 +50,7 @@ RUN useradd -u 1000 -g 1000 -ms /bin/bash user
 USER user
 WORKDIR /home/user
 
-# Copy system Claude configuration from host (extracted by claudito script)
-COPY --chown=user:user .claude-system/ /home/user/.claude/
+# Claude configuration will be mounted at runtime - no baking into image
 
 # Set environment variables
 ENV HOME=/home/user
