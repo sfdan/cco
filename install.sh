@@ -14,15 +14,15 @@ log() {
 }
 
 warn() {
-    echo -e "${YELLOW}[claudito-installer]${NC} $1"
+    echo -e "${YELLOW}⚠${NC} $1"
 }
 
 error() {
-    echo -e "${RED}[claudito-installer]${NC} $1" >&2
+    echo -e "${RED}✗${NC} $1" >&2
 }
 
 info() {
-    echo -e "${BLUE}[claudito-installer]${NC} $1"
+    echo -e "${BLUE}ℹ${NC} $1"
 }
 
 # Configuration
