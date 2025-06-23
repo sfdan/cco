@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 log() {
-    echo -e "${GREEN}[claudito-installer]${NC} $1"
+    echo -e "${GREEN}▶${NC} $1"
 }
 
 warn() {
@@ -206,7 +206,7 @@ show_usage() {
     info "  • Version: ${BLUE}$CURRENT_VERSION${NC}"
     info ""
     info "📋 Next steps:"
-    info "  1. Make sure Claude Code is authenticated: ${BLUE}claude${NC}"
+    info "  1. Make sure Claude Code is authenticated"
     info "  2. Run claudito in any project directory: ${BLUE}claudito${NC}"
     info "  3. For help: ${BLUE}claudito --help${NC}"
     info "  4. To update: ${BLUE}claudito update${NC}"
@@ -217,8 +217,8 @@ show_usage() {
 
 # Main installation function
 main() {
-    info "🚀 Installing claudito - Secure Claude Code Container"
-    info ""
+    log "🚀 Installing claudito - Secure Claude Code Container"
+    echo
     
     check_prerequisites
     determine_symlink_location
