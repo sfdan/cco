@@ -9,7 +9,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     # Languages and runtimes
     python3 python3-pip python3-venv \
     golang-go rustc cargo \
-    openjdk-17-jdk \
     # Database clients (minimal set)
     postgresql-client sqlite3 \
     # Network and system tools
@@ -42,26 +41,18 @@ RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
-# Create user with default UID/GID (runtime --user will map to host)
-RUN groupadd -g 1000 user || true
-RUN useradd -u 1000 -g 1000 -ms /bin/bash user
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Switch to user
-USER user
-WORKDIR /home/user
+# Don't set a default user - let the entrypoint handle user creation and setup
+# The entrypoint will create the appropriate user and set HOME correctly
 
+# Don't set hardcoded environment variables - let entrypoint handle this
 # Claude configuration will be mounted at runtime - no baking into image
 
-# Set environment variables
-ENV HOME=/home/user
-ENV CLAUDE_CONFIG_DIR=/home/user/.claude
-ENV USER=user
-
-# Set up shell environment with modern tools
-RUN echo 'export PATH=$PATH:/usr/local/go/bin' >> /home/user/.bashrc && \
-    echo 'alias ll="ls -la"' >> /home/user/.bashrc && \
-    echo 'alias cat="bat --paging=never"' >> /home/user/.bashrc && \
-    echo 'alias find="fd"' >> /home/user/.bashrc
+# Set entrypoint for user management
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default command: Run Claude Code
 CMD ["claude", "--dangerously-skip-permissions"]

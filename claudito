@@ -3,7 +3,11 @@
 set -e
 
 # Determine if we're running from installation or development
-if [[ -d "$HOME/.local/share/claudito/.git" && "$(basename "$(dirname "$0")")" != "claudito" ]]; then
+if [[ -f "./Dockerfile" && -f "./claudito" ]]; then
+    # Current directory is a claudito development environment
+    CLAUDITO_INSTALLATION_DIR="$PWD"
+    echo -e "${GREEN}▶${NC} Detected claudito development environment, building locally"
+elif [[ -d "$HOME/.local/share/claudito/.git" && "$(basename "$(dirname "$0")")" != "claudito" ]]; then
     # Running from symlink, use installation directory
     CLAUDITO_INSTALLATION_DIR="$HOME/.local/share/claudito"
 else
@@ -95,7 +99,7 @@ verify_claude_authentication() {
         exit 1
     fi
     
-    # Verify credentials exist (but don't copy them - they'll be mounted at runtime)
+    # Verify credentials exist (simple check, no staging)
     if command -v security &> /dev/null; then
         if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
             error "No Claude Code credentials found in macOS Keychain"
@@ -391,7 +395,6 @@ run_container() {
     local current_dir="$PWD"
     
     log "Starting claudito container..."
-    log "Using host UID:GID ${host_uid}:${host_gid}"
     
     # Remove existing container if it exists
     docker rm -f "$CONTAINER_NAME" &> /dev/null || true
@@ -407,7 +410,9 @@ run_container() {
         --name "$CONTAINER_NAME"
         --cap-add=NET_ADMIN
         --cap-add=NET_RAW
-        --user "${host_uid}:${host_gid}"
+        --user "root"
+        -e "HOST_UID=${host_uid}"
+        -e "HOST_GID=${host_gid}"
         -v "$current_dir":"$current_dir"
         -w "$current_dir"
     )
@@ -472,15 +477,43 @@ run_container() {
     
     # Set up Claude Code configuration in container
     local host_system_claude_dir=$(find_claude_config_dir)
-    local container_system_claude_dir="/home/user/.claude"
     local project_claude_dir="$current_dir/.claude"
     
-    # Set CLAUDE_CONFIG_DIR for the container to use the home directory
-    docker_args+=(-e "CLAUDE_CONFIG_DIR=$container_system_claude_dir")
+    # Determine the target user's home directory in container
+    local container_home
+    if [ "$host_uid" = "1000" ]; then
+        container_home="/home/node"
+    else
+        container_home="/home/hostuser"
+    fi
     
-    # Mount entire Claude config directory (read-only) - much simpler!
-    log "Mounting Claude config directory: $host_system_claude_dir → $container_system_claude_dir"
-    docker_args+=(-v "$host_system_claude_dir":"$container_system_claude_dir:ro")
+    # Let Claude Code auto-detect its config directory (don't override with CLAUDE_CONFIG_DIR)
+    
+    # Create temporary directory for credentials extraction
+    local temp_creds_dir=$(mktemp -d)
+    trap "rm -rf $temp_creds_dir" EXIT
+    
+    # Mount system Claude config directory (read-write for state updates)
+    log "Mounting Claude config directory: $host_system_claude_dir → $container_home/.claude"
+    docker_args+=(-v "$host_system_claude_dir":"$container_home/.claude")
+    
+    # Extract fresh credentials from keychain for macOS
+    if command -v security &> /dev/null; then
+        local keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+        if [ -n "$keychain_creds" ]; then
+            echo "$keychain_creds" > "$temp_creds_dir/.credentials.json"
+            chmod 600 "$temp_creds_dir/.credentials.json"
+            # Mount the fresh credentials over the system directory's credentials
+            docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
+            log "Mounting fresh credentials from macOS Keychain"
+        fi
+    fi
+    
+    # Mount main .claude.json from home directory (this is separate from .claude/)
+    if [ -f "$HOME/.claude.json" ]; then
+        log "Mounting main .claude.json from home directory"
+        docker_args+=(-v "$HOME/.claude.json":"$container_home/.claude.json")
+    fi
     
     # Mount project-specific .claude directory (read-write for project settings)
     if [ -d "$project_claude_dir" ]; then
@@ -488,17 +521,11 @@ run_container() {
         docker_args+=(-v "$project_claude_dir":"$project_claude_dir")
     fi
     
-    # Mount .claude.json from home level (contains project paths and UI state)
-    if [ -f "$HOME/.claude.json" ]; then
-        docker_args+=(-v "$HOME/.claude.json":"/home/user/.claude.json:ro")
-        log "Mounting .claude.json from home directory (read-only)"
-    fi
-    
     # Bind mount common config files
-    [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"/home/user/.gitconfig:ro")
-    [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"/home/user/.ssh:ro")
+    [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"$container_home/.gitconfig:ro")
+    [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"$container_home/.ssh:ro")
     
-    # Run the container
+    # Run the container (entrypoint will handle user setup)
     if [ "$shell_mode" = true ]; then
         docker run "${docker_args[@]}" "$IMAGE_NAME" bash
     else
