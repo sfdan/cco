@@ -137,10 +137,58 @@ setup_system_credentials() {
     log "System Claude Code configuration prepared for container build"
 }
 
+# Check if we should use pre-built image
+should_use_prebuilt_image() {
+    # Don't use pre-built if explicitly rebuilding
+    if [ "$rebuild_image" = true ]; then
+        return 1
+    fi
+    
+    # Don't use pre-built if custom packages specified
+    if [[ ${#custom_packages[@]} -gt 0 ]]; then
+        return 1
+    fi
+    
+    # Don't use pre-built if Dockerfile has been modified locally
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local dockerfile_status=$(cd "$CLAUDITO_INSTALLATION_DIR" && git status --porcelain Dockerfile 2>/dev/null)
+        if [[ -n "$dockerfile_status" ]]; then
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# Get the appropriate image tag for current version
+get_prebuilt_image_tag() {
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local commit_sha=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse HEAD 2>/dev/null)
+        echo "ghcr.io/nikvdp/claudito:${commit_sha}"
+    else
+        echo "ghcr.io/nikvdp/claudito:latest"
+    fi
+}
+
+# Try to pull pre-built image
+pull_prebuilt_image() {
+    local image_tag=$(get_prebuilt_image_tag)
+    
+    log "Attempting to pull pre-built image: $image_tag"
+    
+    if docker pull "$image_tag" >/dev/null 2>&1; then
+        # Tag as local image name for consistency
+        docker tag "$image_tag" "$IMAGE_NAME" >/dev/null 2>&1
+        log "Successfully pulled pre-built image"
+        return 0
+    else
+        warn "Could not pull pre-built image, building locally..."
+        return 1
+    fi
+}
+
 # Build Docker image
 build_image() {
-    local host_uid=$(id -u)
-    local host_gid=$(id -g)
     local original_dir="$PWD"
     
     log "Building claudito Docker image..."
@@ -152,10 +200,7 @@ build_image() {
         exit 1
     }
     
-    local build_args=(
-        --build-arg HOST_UID="$host_uid"
-        --build-arg HOST_GID="$host_gid"
-    )
+    local build_args=()
     
     # Add custom packages if specified
     if [[ ${#custom_packages[@]} -gt 0 ]]; then
@@ -603,17 +648,31 @@ main() {
     check_docker
     setup_system_credentials
     
-    # Rebuild image if requested, custom packages specified, or if image doesn't exist
-    if [ "$rebuild_image" = true ] || [ ${#custom_packages[@]} -gt 0 ]; then
+    # Determine whether to pull pre-built image or build locally
+    if ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
+        # No local image exists
+        if should_use_prebuilt_image; then
+            # Try to pull pre-built image, fallback to build
+            if ! pull_prebuilt_image; then
+                build_image
+            fi
+        else
+            # Build locally due to customizations
+            if [ "$rebuild_image" = true ]; then
+                log "Rebuilding claudito image..."
+            elif [ ${#custom_packages[@]} -gt 0 ]; then
+                log "Custom packages specified, building image..."
+            fi
+            build_image
+        fi
+    elif [ "$rebuild_image" = true ] || [ ${#custom_packages[@]} -gt 0 ]; then
+        # Force rebuild requested or customizations specified
         if [ ${#custom_packages[@]} -gt 0 ]; then
             log "Custom packages specified, rebuilding image..."
         else
             log "Rebuilding claudito image..."
         fi
         docker image rm "$IMAGE_NAME" &> /dev/null || true
-        build_image
-    elif ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
-        log "No existing image found, building..."
         build_image
     else
         log "Using existing claudito image"

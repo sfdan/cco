@@ -42,11 +42,9 @@ RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
-# Create user with dynamic UID/GID (will be overridden at runtime)
-ARG HOST_UID=1000
-ARG HOST_GID=1000
-RUN groupadd -g ${HOST_GID} user || true
-RUN useradd -u ${HOST_UID} -g ${HOST_GID} -ms /bin/bash user
+# Create user with default UID/GID (runtime --user will map to host)
+RUN groupadd -g 1000 user || true
+RUN useradd -u 1000 -g 1000 -ms /bin/bash user
 
 # Switch to user
 USER user
