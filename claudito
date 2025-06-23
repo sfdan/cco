@@ -100,7 +100,7 @@ setup_system_credentials() {
         cp -r "$claude_config_dir"/* "$CLAUDITO_INSTALLATION_DIR/.claude-system/" 2>/dev/null || true
     else
         error "No Claude Code configuration found at $claude_config_dir"
-        error "Please run 'claude' first to authenticate, then try again."
+        error "Please run \`claude\` and login to authenticate, then try again."
         exit 1
     fi
     
@@ -119,7 +119,7 @@ setup_system_credentials() {
         log "Verified existing Claude Code credentials file"
     else
         error "No Claude Code credentials found!"
-        error "Please run 'claude' first to authenticate, then try again."
+        error "Please run \`claude\` and login to authenticate, then try again."
         exit 1
     fi
     
@@ -585,7 +585,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Requirements:"
             echo "  - Docker installed and running"
-            echo "  - Claude Code authenticated (run 'claude' first)"
+            echo "  - Claude Code authenticated (run \`claude\` and login)"
             exit 0
             ;;
         *)
