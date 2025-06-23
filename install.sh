@@ -27,7 +27,8 @@ info() {
 
 # Configuration
 GITHUB_REPO="nikvdp/claudito"
-GITHUB_URL="https://github.com/${GITHUB_REPO}.git"
+GITHUB_SSH_URL="git@github.com:${GITHUB_REPO}.git"
+GITHUB_HTTPS_URL="https://github.com/${GITHUB_REPO}.git"
 CLAUDITO_INSTALLATION_DIR="$HOME/.local/share/claudito"
 
 # Determine symlink location using smart strategy
@@ -78,6 +79,26 @@ check_prerequisites() {
     log "Prerequisites check passed"
 }
 
+# Clone with SSH first, fallback to HTTPS
+clone_repository() {
+    local target_dir="$1"
+    
+    log "Attempting to clone with SSH authentication..."
+    if git clone "$GITHUB_SSH_URL" "$target_dir" 2>/dev/null; then
+        log "Successfully cloned using SSH"
+        return 0
+    fi
+    
+    warn "SSH clone failed, falling back to HTTPS..."
+    if git clone "$GITHUB_HTTPS_URL" "$target_dir"; then
+        log "Successfully cloned using HTTPS"
+        return 0
+    fi
+    
+    error "Failed to clone repository with both SSH and HTTPS"
+    return 1
+}
+
 # Clone or update claudito installation
 install_or_update_claudito() {
     # Determine if we're in a claudito repo
@@ -120,7 +141,7 @@ install_or_update_claudito() {
         log "Installing claudito to $CLAUDITO_INSTALLATION_DIR..."
         mkdir -p "$(dirname "$CLAUDITO_INSTALLATION_DIR")"
         
-        if ! git clone "$GITHUB_URL" "$CLAUDITO_INSTALLATION_DIR"; then
+        if ! clone_repository "$CLAUDITO_INSTALLATION_DIR"; then
             error "Failed to clone claudito repository"
             error "Please check your internet connection and try again."
             exit 1
