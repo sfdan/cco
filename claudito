@@ -193,6 +193,27 @@ run_container() {
         fi
     fi
     
+    # Extract fresh credentials from Keychain and mount over build-time copy
+    if command -v security &> /dev/null; then
+        log "Mounting fresh credentials from macOS Keychain..."
+        TEMP_CREDS_DIR="/tmp/claudito-creds-$$"
+        mkdir -p "$TEMP_CREDS_DIR"
+        
+        if KEYCHAIN_CREDENTIALS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null); then
+            echo "$KEYCHAIN_CREDENTIALS" > "$TEMP_CREDS_DIR/.credentials.json"
+            docker_args+=(-v "$TEMP_CREDS_DIR/.credentials.json":"/home/user/.claude/.credentials.json:ro")
+            log "Fresh credentials mounted from macOS Keychain"
+            
+            # Clean up temp directory on exit
+            trap "rm -rf $TEMP_CREDS_DIR" EXIT
+        fi
+    fi
+    
+    # Mount live settings to pick up vim mode and other preferences
+    if [ -f "$HOME/.claude/settings.json" ]; then
+        docker_args+=(-v "$HOME/.claude/settings.json":"/home/user/.claude/settings.json:ro")
+    fi
+    
     # Bind mount common config files
     [ -f "$HOME/.gitconfig" ] && docker_args+=(-v "$HOME/.gitconfig":"/home/user/.gitconfig:ro")
     [ -d "$HOME/.ssh" ] && docker_args+=(-v "$HOME/.ssh":"/home/user/.ssh:ro")
