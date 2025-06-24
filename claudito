@@ -4,19 +4,20 @@ set -e
 
 # Determine if we're running from installation or development
 if [[ -f "./Dockerfile" && -f "./claudito" ]]; then
-	# Current directory is a claudito development environment
-	CLAUDITO_INSTALLATION_DIR="$PWD"
-	echo -e "${GREEN}▶${NC} Detected claudito development environment, building locally"
+    # Current directory is a claudito development environment
+    CLAUDITO_INSTALLATION_DIR="$PWD"
+    echo -e "${GREEN}▶${NC} Detected claudito development environment, building locally"
 elif [[ -d "$HOME/.local/share/claudito/.git" && "$(basename "$(dirname "$0")")" != "claudito" ]]; then
-	# Running from symlink, use installation directory
-	CLAUDITO_INSTALLATION_DIR="$HOME/.local/share/claudito"
+    # Running from symlink, use installation directory
+    CLAUDITO_INSTALLATION_DIR="$HOME/.local/share/claudito"
 else
-	# Running from development directory
-	CLAUDITO_INSTALLATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # Running from development directory
+    CLAUDITO_INSTALLATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
 IMAGE_NAME="claudito:latest"
-CONTAINER_NAME="claudito-$(basename "$PWD")"
+# Generate unique container name to allow concurrent sessions
+CONTAINER_NAME="claudito-$(basename "$PWD")-$(date +%s)-$$"
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,28 +26,28 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 log() {
-	echo -e "${GREEN}▶${NC} $1"
+    echo -e "${GREEN}▶${NC} $1"
 }
 
 warn() {
-	echo -e "${YELLOW}⚠${NC} $1"
+    echo -e "${YELLOW}⚠${NC} $1"
 }
 
 error() {
-	echo -e "${RED}✗${NC} $1" >&2
+    echo -e "${RED}✗${NC} $1" >&2
 }
 
 # Check if Docker is available
 check_docker() {
-	if ! command -v docker &>/dev/null; then
-		error "Docker is not installed or not in PATH"
-		exit 1
-	fi
+    if ! command -v docker &>/dev/null; then
+        error "Docker is not installed or not in PATH"
+        exit 1
+    fi
 
-	if ! docker info &>/dev/null; then
-		error "Docker daemon is not running"
-		exit 1
-	fi
+    if ! docker info &>/dev/null; then
+        error "Docker daemon is not running"
+        exit 1
+    fi
 }
 
 # Determine Claude Code config directory following priority order:
@@ -54,521 +55,521 @@ check_docker() {
 # 2. XDG_CONFIG_HOME/claude or ~/.config/claude (new default since v1.0.30)
 # 3. ~/.claude (legacy fallback)
 get_claude_config_dir() {
-	if [[ -n "$CLAUDE_CONFIG_DIR" ]]; then
-		echo "$CLAUDE_CONFIG_DIR"
-	elif [[ -n "$XDG_CONFIG_HOME" ]]; then
-		echo "$XDG_CONFIG_HOME/claude"
-	elif [[ -d "$HOME/.config" ]]; then
-		echo "$HOME/.config/claude"
-	else
-		echo "$HOME/.claude"
-	fi
+    if [[ -n "$CLAUDE_CONFIG_DIR" ]]; then
+        echo "$CLAUDE_CONFIG_DIR"
+    elif [[ -n "$XDG_CONFIG_HOME" ]]; then
+        echo "$XDG_CONFIG_HOME/claude"
+    elif [[ -d "$HOME/.config" ]]; then
+        echo "$HOME/.config/claude"
+    else
+        echo "$HOME/.claude"
+    fi
 }
 
 # Find where Claude Code actually stores its configuration
 find_claude_config_dir() {
-	local primary_dir
-	primary_dir=$(get_claude_config_dir)
-	local legacy_dir="$HOME/.claude"
+    local primary_dir
+    primary_dir=$(get_claude_config_dir)
+    local legacy_dir="$HOME/.claude"
 
-	# Check primary location first
-	if [[ -d "$primary_dir" ]] && [[ -f "$primary_dir/.credentials.json" || -n "$(command -v security)" ]]; then
-		echo "$primary_dir"
-		return
-	fi
+    # Check primary location first
+    if [[ -d "$primary_dir" ]] && [[ -f "$primary_dir/.credentials.json" || -n "$(command -v security)" ]]; then
+        echo "$primary_dir"
+        return
+    fi
 
-	# Fall back to legacy location
-	if [[ -d "$legacy_dir" ]] && [[ -f "$legacy_dir/.credentials.json" || -n "$(command -v security)" ]]; then
-		echo "$legacy_dir"
-		return
-	fi
+    # Fall back to legacy location
+    if [[ -d "$legacy_dir" ]] && [[ -f "$legacy_dir/.credentials.json" || -n "$(command -v security)" ]]; then
+        echo "$legacy_dir"
+        return
+    fi
 
-	# Return primary location for error reporting
-	echo "$primary_dir"
+    # Return primary location for error reporting
+    echo "$primary_dir"
 }
 
 # Verify Claude Code authentication is available
 verify_claude_authentication() {
-	log "Verifying Claude Code authentication..."
+    log "Verifying Claude Code authentication..."
 
-	local claude_config_dir
-	claude_config_dir=$(find_claude_config_dir)
+    local claude_config_dir
+    claude_config_dir=$(find_claude_config_dir)
 
-	# Check if config directory exists
-	if [[ ! -d "$claude_config_dir" ]]; then
-		error "No Claude Code configuration found at $claude_config_dir"
-		error "Please run \`claude\` and login to authenticate, then try again."
-		exit 1
-	fi
+    # Check if config directory exists
+    if [[ ! -d "$claude_config_dir" ]]; then
+        error "No Claude Code configuration found at $claude_config_dir"
+        error "Please run \`claude\` and login to authenticate, then try again."
+        exit 1
+    fi
 
-	# Verify credentials exist (simple check, no staging)
-	if command -v security &>/dev/null; then
-		if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
-			error "No Claude Code credentials found in macOS Keychain"
-			error "Please run \`claude\` and login to authenticate, then try again."
-			exit 1
-		fi
-		log "Verified Claude Code credentials in macOS Keychain"
-	elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
-		log "Verified Claude Code credentials file exists"
-	else
-		error "No Claude Code credentials found!"
-		error "Please run \`claude\` and login to authenticate, then try again."
-		exit 1
-	fi
+    # Verify credentials exist (simple check, no staging)
+    if command -v security &>/dev/null; then
+        if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
+            error "No Claude Code credentials found in macOS Keychain"
+            error "Please run \`claude\` and login to authenticate, then try again."
+            exit 1
+        fi
+        log "Verified Claude Code credentials in macOS Keychain"
+    elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
+        log "Verified Claude Code credentials file exists"
+    else
+        error "No Claude Code credentials found!"
+        error "Please run \`claude\` and login to authenticate, then try again."
+        exit 1
+    fi
 
-	log "Claude Code authentication verified"
+    log "Claude Code authentication verified"
 }
 
 # Check if we should use pre-built image
 should_use_prebuilt_image() {
-	# Don't use pre-built if explicitly rebuilding
-	if [[ "$rebuild_image" = true ]]; then
-		return 1
-	fi
+    # Don't use pre-built if explicitly rebuilding
+    if [[ "$rebuild_image" = true ]]; then
+        return 1
+    fi
 
-	# Don't use pre-built if custom packages specified
-	if [[ ${#custom_packages[@]} -gt 0 ]]; then
-		return 1
-	fi
+    # Don't use pre-built if custom packages specified
+    if [[ ${#custom_packages[@]} -gt 0 ]]; then
+        return 1
+    fi
 
-	# Don't use pre-built if Dockerfile has been modified locally
-	if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
-		local dockerfile_status
-		dockerfile_status=$(cd "$CLAUDITO_INSTALLATION_DIR" && git status --porcelain Dockerfile 2>/dev/null)
-		if [[ -n "$dockerfile_status" ]]; then
-			return 1
-		fi
-	fi
+    # Don't use pre-built if Dockerfile has been modified locally
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local dockerfile_status
+        dockerfile_status=$(cd "$CLAUDITO_INSTALLATION_DIR" && git status --porcelain Dockerfile 2>/dev/null)
+        if [[ -n "$dockerfile_status" ]]; then
+            return 1
+        fi
+    fi
 
-	return 0
+    return 0
 }
 
 # Get the appropriate image tag for current version
 get_prebuilt_image_tag() {
-	if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
-		local commit_sha
-		commit_sha=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse HEAD 2>/dev/null)
-		echo "ghcr.io/nikvdp/claudito:${commit_sha}"
-	else
-		echo "ghcr.io/nikvdp/claudito:latest"
-	fi
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local commit_sha
+        commit_sha=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse HEAD 2>/dev/null)
+        echo "ghcr.io/nikvdp/claudito:${commit_sha}"
+    else
+        echo "ghcr.io/nikvdp/claudito:latest"
+    fi
 }
 
 # Try to pull pre-built image
 pull_prebuilt_image() {
-	local image_tag
-	image_tag=$(get_prebuilt_image_tag)
+    local image_tag
+    image_tag=$(get_prebuilt_image_tag)
 
-	log "Attempting to pull pre-built image: $image_tag"
+    log "Attempting to pull pre-built image: $image_tag"
 
-	if docker pull "$image_tag" >/dev/null 2>&1; then
-		# Tag as local image name for consistency
-		docker tag "$image_tag" "$IMAGE_NAME" >/dev/null 2>&1
-		log "Successfully pulled pre-built image"
-		return 0
-	else
-		warn "Could not pull pre-built image, building locally..."
-		return 1
-	fi
+    if docker pull "$image_tag" >/dev/null 2>&1; then
+        # Tag as local image name for consistency
+        docker tag "$image_tag" "$IMAGE_NAME" >/dev/null 2>&1
+        log "Successfully pulled pre-built image"
+        return 0
+    else
+        warn "Could not pull pre-built image, building locally..."
+        return 1
+    fi
 }
 
 # Build Docker image
 build_image() {
-	local original_dir="$PWD"
+    local original_dir="$PWD"
 
-	log "Building claudito Docker image..."
+    log "Building claudito Docker image..."
 
-	# Always build from installation directory
-	cd "$CLAUDITO_INSTALLATION_DIR" || {
-		error "Claudito installation not found at $CLAUDITO_INSTALLATION_DIR"
-		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
-		exit 1
-	}
+    # Always build from installation directory
+    cd "$CLAUDITO_INSTALLATION_DIR" || {
+        error "Claudito installation not found at $CLAUDITO_INSTALLATION_DIR"
+        error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
+        exit 1
+    }
 
-	local build_args=()
+    local build_args=()
 
-	# Add custom packages if specified
-	if [[ ${#custom_packages[@]} -gt 0 ]]; then
-		local packages_list
-		packages_list=$(
-			IFS=' '
-			echo "${custom_packages[*]}"
-		)
-		log "Installing additional packages: $packages_list"
-		build_args+=(--build-arg CUSTOM_PACKAGES="$packages_list")
-	fi
+    # Add custom packages if specified
+    if [[ ${#custom_packages[@]} -gt 0 ]]; then
+        local packages_list
+        packages_list=$(
+            IFS=' '
+            echo "${custom_packages[*]}"
+        )
+        log "Installing additional packages: $packages_list"
+        build_args+=(--build-arg CUSTOM_PACKAGES="$packages_list")
+    fi
 
-	docker build -t "$IMAGE_NAME" "${build_args[@]}" .
-	cd "$original_dir"
-	log "Image built successfully"
+    docker build -t "$IMAGE_NAME" "${build_args[@]}" .
+    cd "$original_dir"
+    log "Image built successfully"
 }
 
 # Update claudito installation
 update_claudito() {
-	if [[ ! -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
-		error "Claudito installation not found at $CLAUDITO_INSTALLATION_DIR"
-		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
-		exit 1
-	fi
+    if [[ ! -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        error "Claudito installation not found at $CLAUDITO_INSTALLATION_DIR"
+        error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash"
+        exit 1
+    fi
 
-	local original_dir="$PWD"
-	cd "$CLAUDITO_INSTALLATION_DIR"
+    local original_dir="$PWD"
+    cd "$CLAUDITO_INSTALLATION_DIR"
 
-	log "Updating claudito installation..."
+    log "Updating claudito installation..."
 
-	# Check for local modifications
-	if ! git diff --quiet HEAD 2>/dev/null; then
-		warn "WARNING: Your claudito installation has local modifications."
-		warn "Most users should reset to the latest version (this is safe)."
-		warn "Only say 'no' if you've customized claudito yourself."
-		echo
-		read -p "Reset to latest version and lose local changes? [Y/n] " -n 1 -r
-		echo
-		if [[ $REPLY =~ ^[Nn]$ ]]; then
-			warn "Skipping update to preserve local changes"
-			cd "$original_dir"
-			return 1
-		fi
-		log "Resetting to latest version..."
-		git reset --hard origin/master
-	fi
+    # Check for local modifications
+    if ! git diff --quiet HEAD 2>/dev/null; then
+        warn "WARNING: Your claudito installation has local modifications."
+        warn "Most users should reset to the latest version (this is safe)."
+        warn "Only say 'no' if you've customized claudito yourself."
+        echo
+        read -p "Reset to latest version and lose local changes? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            warn "Skipping update to preserve local changes"
+            cd "$original_dir"
+            return 1
+        fi
+        log "Resetting to latest version..."
+        git reset --hard origin/master
+    fi
 
-	git fetch origin
-	git pull origin master
-	local new_version
-	new_version=$(git rev-parse --short HEAD)
-	log "Updated to $new_version"
+    git fetch origin
+    git pull origin master
+    local new_version
+    new_version=$(git rev-parse --short HEAD)
+    log "Updated to $new_version"
 
-	log "Rebuilding Docker image with latest changes..."
-	build_image
+    log "Rebuilding Docker image with latest changes..."
+    build_image
 
-	cd "$original_dir"
-	log "Update complete!"
+    cd "$original_dir"
+    log "Update complete!"
 }
 
 # Show version information
 show_version() {
-	if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
-		local version
-		version=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-		local install_type="installation"
-	else
-		local version="dev"
-		local install_type="development"
-	fi
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local version
+        version=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        local install_type="installation"
+    else
+        local version="dev"
+        local install_type="development"
+    fi
 
-	echo "claudito $version ($install_type)"
-	echo "Installation: $CLAUDITO_INSTALLATION_DIR"
+    echo "claudito $version ($install_type)"
+    echo "Installation: $CLAUDITO_INSTALLATION_DIR"
 }
 
 # Show comprehensive system information and status
 show_info() {
-	echo "claudito - System Information & Status"
-	echo "======================================"
-	echo
+    echo "claudito - System Information & Status"
+    echo "======================================"
+    echo
 
-	# Version info
-	if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
-		local version
-		version=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-		local install_type="installation"
-		local git_status
-		git_status=$(cd "$CLAUDITO_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
-	else
-		local version="dev"
-		local install_type="development"
-		local git_status=""
-	fi
+    # Version info
+    if [[ -d "$CLAUDITO_INSTALLATION_DIR/.git" ]]; then
+        local version
+        version=$(cd "$CLAUDITO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        local install_type="installation"
+        local git_status
+        git_status=$(cd "$CLAUDITO_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
+    else
+        local version="dev"
+        local install_type="development"
+        local git_status=""
+    fi
 
-	echo "📦 Claudito Information:"
-	echo "  Version: $version ($install_type)"
-	echo "  Location: $CLAUDITO_INSTALLATION_DIR"
-	if [[ -n "$git_status" ]]; then
-		echo "  Git Status: Modified (local changes present)"
-	elif [[ "$install_type" == "installation" ]]; then
-		echo "  Git Status: Clean"
-	fi
-	echo
+    echo "📦 Claudito Information:"
+    echo "  Version: $version ($install_type)"
+    echo "  Location: $CLAUDITO_INSTALLATION_DIR"
+    if [[ -n "$git_status" ]]; then
+        echo "  Git Status: Modified (local changes present)"
+    elif [[ "$install_type" == "installation" ]]; then
+        echo "  Git Status: Clean"
+    fi
+    echo
 
-	# Docker status
-	echo "🐳 Docker Status:"
-	if command -v docker &>/dev/null; then
-		echo "  Docker CLI: ✓ Available"
-		if docker info &>/dev/null; then
-			local docker_version
-			docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
-			echo "  Docker Daemon: ✓ Running (v$docker_version)"
+    # Docker status
+    echo "🐳 Docker Status:"
+    if command -v docker &>/dev/null; then
+        echo "  Docker CLI: ✓ Available"
+        if docker info &>/dev/null; then
+            local docker_version
+            docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+            echo "  Docker Daemon: ✓ Running (v$docker_version)"
 
-			# Check if our image exists
-			if docker image inspect "$IMAGE_NAME" &>/dev/null; then
-				local image_created
-				image_created=$(docker image inspect "$IMAGE_NAME" --format '{{.Created}}' | cut -d'T' -f1)
-				echo "  Claudito Image: ✓ Built ($image_created)"
-			else
-				echo "  Claudito Image: ✗ Not built (run with --rebuild)"
-			fi
-		else
-			echo "  Docker Daemon: ✗ Not running"
-		fi
-	else
-		echo "  Docker CLI: ✗ Not installed"
-	fi
-	echo
+            # Check if our image exists
+            if docker image inspect "$IMAGE_NAME" &>/dev/null; then
+                local image_created
+                image_created=$(docker image inspect "$IMAGE_NAME" --format '{{.Created}}' | cut -d'T' -f1)
+                echo "  Claudito Image: ✓ Built ($image_created)"
+            else
+                echo "  Claudito Image: ✗ Not built (run with --rebuild)"
+            fi
+        else
+            echo "  Docker Daemon: ✗ Not running"
+        fi
+    else
+        echo "  Docker CLI: ✗ Not installed"
+    fi
+    echo
 
-	# Claude Code authentication status
-	echo "🤖 Claude Code Status:"
-	if command -v claude &>/dev/null; then
-		local claude_version
-		claude_version=$(claude --version 2>/dev/null | head -1 || echo "unknown")
-		echo "  Claude CLI: ✓ Available ($claude_version)"
+    # Claude Code authentication status
+    echo "🤖 Claude Code Status:"
+    if command -v claude &>/dev/null; then
+        local claude_version
+        claude_version=$(claude --version 2>/dev/null | head -1 || echo "unknown")
+        echo "  Claude CLI: ✓ Available ($claude_version)"
 
-		# Check authentication
-		local claude_config_dir
-		claude_config_dir=$(find_claude_config_dir)
-		if [[ -d "$claude_config_dir" ]]; then
-			echo "  Config Directory: ✓ Found ($claude_config_dir)"
+        # Check authentication
+        local claude_config_dir
+        claude_config_dir=$(find_claude_config_dir)
+        if [[ -d "$claude_config_dir" ]]; then
+            echo "  Config Directory: ✓ Found ($claude_config_dir)"
 
-			# Check credentials
-			local auth_status="✗ Not authenticated"
-			if command -v security &>/dev/null; then
-				if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
-					auth_status="✓ Authenticated (Keychain)"
-				fi
-			elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
-				auth_status="✓ Authenticated (File)"
-			fi
-			echo "  Authentication: $auth_status"
-		else
-			echo "  Config Directory: ✗ Not found"
-			echo "  Authentication: ✗ Not configured"
-		fi
-	else
-		echo "  Claude CLI: ✗ Not installed"
-		echo "  Authentication: ✗ Cannot check"
-	fi
-	echo
+            # Check credentials
+            local auth_status="✗ Not authenticated"
+            if command -v security &>/dev/null; then
+                if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
+                    auth_status="✓ Authenticated (Keychain)"
+                fi
+            elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
+                auth_status="✓ Authenticated (File)"
+            fi
+            echo "  Authentication: $auth_status"
+        else
+            echo "  Config Directory: ✗ Not found"
+            echo "  Authentication: ✗ Not configured"
+        fi
+    else
+        echo "  Claude CLI: ✗ Not installed"
+        echo "  Authentication: ✗ Cannot check"
+    fi
+    echo
 
-	# System info
-	echo "💻 System Information:"
-	echo "  OS: $(uname -s) $(uname -r)"
-	echo "  Architecture: $(uname -m)"
-	echo "  User: $(whoami)"
-	echo "  UID/GID: $(id -u):$(id -g)"
-	echo
+    # System info
+    echo "💻 System Information:"
+    echo "  OS: $(uname -s) $(uname -r)"
+    echo "  Architecture: $(uname -m)"
+    echo "  User: $(whoami)"
+    echo "  UID/GID: $(id -u):$(id -g)"
+    echo
 
-	# Overall status
-	echo "🎯 Overall Status:"
-	local ready=true
-	local issues=()
+    # Overall status
+    echo "🎯 Overall Status:"
+    local ready=true
+    local issues=()
 
-	if ! command -v docker &>/dev/null; then
-		ready=false
-		issues+=("Docker not installed")
-	elif ! docker info &>/dev/null; then
-		ready=false
-		issues+=("Docker daemon not running")
-	fi
+    if ! command -v docker &>/dev/null; then
+        ready=false
+        issues+=("Docker not installed")
+    elif ! docker info &>/dev/null; then
+        ready=false
+        issues+=("Docker daemon not running")
+    fi
 
-	if ! command -v claude &>/dev/null; then
-		ready=false
-		issues+=("Claude Code not installed")
-	else
-		local claude_config_dir
-		claude_config_dir=$(find_claude_config_dir)
-		if [[ ! -d "$claude_config_dir" ]]; then
-			ready=false
-			issues+=("Claude Code not configured")
-		else
-			local auth_ok=false
-			if command -v security &>/dev/null; then
-				if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
-					auth_ok=true
-				fi
-			elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
-				auth_ok=true
-			fi
-			if [[ "$auth_ok" = false ]]; then
-				ready=false
-				issues+=("Claude Code not authenticated")
-			fi
-		fi
-	fi
+    if ! command -v claude &>/dev/null; then
+        ready=false
+        issues+=("Claude Code not installed")
+    else
+        local claude_config_dir
+        claude_config_dir=$(find_claude_config_dir)
+        if [[ ! -d "$claude_config_dir" ]]; then
+            ready=false
+            issues+=("Claude Code not configured")
+        else
+            local auth_ok=false
+            if command -v security &>/dev/null; then
+                if security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
+                    auth_ok=true
+                fi
+            elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
+                auth_ok=true
+            fi
+            if [[ "$auth_ok" = false ]]; then
+                ready=false
+                issues+=("Claude Code not authenticated")
+            fi
+        fi
+    fi
 
-	if [[ "$ready" = true ]]; then
-		echo "  Status: ✓ Ready to use claudito"
-	else
-		echo "  Status: ✗ Issues found"
-		echo "  Issues:"
-		for issue in "${issues[@]}"; do
-			echo "    - $issue"
-		done
-	fi
+    if [[ "$ready" = true ]]; then
+        echo "  Status: ✓ Ready to use claudito"
+    else
+        echo "  Status: ✗ Issues found"
+        echo "  Issues:"
+        for issue in "${issues[@]}"; do
+            echo "    - $issue"
+        done
+    fi
 }
 
 # Main run function
 run_container() {
-	local host_uid
-	host_uid=$(id -u)
-	local host_gid
-	host_gid=$(id -g)
-	local current_dir="$PWD"
+    local host_uid
+    host_uid=$(id -u)
+    local host_gid
+    host_gid=$(id -g)
+    local current_dir="$PWD"
 
-	log "Starting claudito container..."
+    log "Starting claudito container..."
 
-	# Remove existing container if it exists
-	docker rm -f "$CONTAINER_NAME" &>/dev/null || true
+    # Remove existing container if it exists
+    docker rm -f "$CONTAINER_NAME" &>/dev/null || true
 
-	# Detect if we have a TTY
-	local tty_flag=""
-	if [[ -t 0 && -t 1 ]]; then
-		tty_flag="-it"
-	fi
+    # Detect if we have a TTY
+    local tty_flag=""
+    if [[ -t 0 && -t 1 ]]; then
+        tty_flag="-it"
+    fi
 
-	local docker_args=(
-		--rm
-		--name "$CONTAINER_NAME"
-		--cap-add=NET_ADMIN
-		--cap-add=NET_RAW
-		--user "root"
-		-e "HOST_UID=${host_uid}"
-		-e "HOST_GID=${host_gid}"
-		-v "$current_dir":"$current_dir"
-		-w "$current_dir"
-	)
-	
-	# Add TTY flags if available
-	if [[ -n "$tty_flag" ]]; then
-		docker_args+=("$tty_flag")
-	fi
+    local docker_args=(
+        --rm
+        --name "$CONTAINER_NAME"
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --user "root"
+        -e "HOST_UID=${host_uid}"
+        -e "HOST_GID=${host_gid}"
+        -v "$current_dir":"$current_dir"
+        -w "$current_dir"
+    )
 
-	# Pass through relevant environment variables
-	local env_vars=(
-		"ANTHROPIC_API_KEY"
-		"ANTHROPIC_BASE_URL"
-		"CLAUDE_CONFIG_DIR"
-		"XDG_CONFIG_HOME"
-		"NO_COLOR"
-		"TERM"
-		"COLORTERM"
-		"LANG"
-		"LC_ALL"
-		"TZ"
-		"HTTP_PROXY"
-		"HTTPS_PROXY"
-		"NO_PROXY"
-		"GIT_AUTHOR_NAME"
-		"GIT_AUTHOR_EMAIL"
-		"GIT_COMMITTER_NAME"
-		"GIT_COMMITTER_EMAIL"
-	)
+    # Add TTY flags if available
+    if [[ -n "$tty_flag" ]]; then
+        docker_args+=("$tty_flag")
+    fi
 
-	for var in "${env_vars[@]}"; do
-		if [[ -n "${!var}" ]]; then
-			docker_args+=(-e "$var=${!var}")
-		fi
-	done
+    # Pass through relevant environment variables
+    local env_vars=(
+        "ANTHROPIC_API_KEY"
+        "ANTHROPIC_BASE_URL"
+        "CLAUDE_CONFIG_DIR"
+        "XDG_CONFIG_HOME"
+        "NO_COLOR"
+        "TERM"
+        "COLORTERM"
+        "LANG"
+        "LC_ALL"
+        "TZ"
+        "HTTP_PROXY"
+        "HTTPS_PROXY"
+        "NO_PROXY"
+        "GIT_AUTHOR_NAME"
+        "GIT_AUTHOR_EMAIL"
+        "GIT_COMMITTER_NAME"
+        "GIT_COMMITTER_EMAIL"
+    )
 
-	# Add custom environment variables from command line
-	for custom_env in "${custom_env_vars[@]}"; do
-		if [[ "$custom_env" == *"="* ]]; then
-			# KEY=VALUE format
-			docker_args+=(-e "$custom_env")
-		else
-			# KEY format - pass through from host environment
-			if [[ -n "${!custom_env}" ]]; then
-				docker_args+=(-e "$custom_env=${!custom_env}")
-			fi
-		fi
-	done
+    for var in "${env_vars[@]}"; do
+        if [[ -n "${!var}" ]]; then
+            docker_args+=(-e "$var=${!var}")
+        fi
+    done
 
-	# Load .env file if it exists
-	[[ -f ".env" ]] && docker_args+=(--env-file .env)
+    # Add custom environment variables from command line
+    for custom_env in "${custom_env_vars[@]}"; do
+        if [[ "$custom_env" == *"="* ]]; then
+            # KEY=VALUE format
+            docker_args+=(-e "$custom_env")
+        else
+            # KEY format - pass through from host environment
+            if [[ -n "${!custom_env}" ]]; then
+                docker_args+=(-e "$custom_env=${!custom_env}")
+            fi
+        fi
+    done
 
-	# Enable Docker access if requested
-	if [[ "$docker_access" = true ]]; then
-		# Check for Docker socket locations (Linux and macOS with Docker Desktop)
-		if [[ -S "/var/run/docker.sock" ]]; then
-			log "Enabling Docker access via /var/run/docker.sock"
-			docker_args+=(-v "/var/run/docker.sock":"/var/run/docker.sock")
-		elif [[ -S "$HOME/.docker/run/docker.sock" ]]; then
-			log "Enabling Docker access via $HOME/.docker/run/docker.sock"
-			docker_args+=(-v "$HOME/.docker/run/docker.sock":"/var/run/docker.sock")
-		else
-			warn "Docker socket not found - Docker access may not work"
-			warn "Tried: /var/run/docker.sock, $HOME/.docker/run/docker.sock"
-		fi
-	fi
+    # Load .env file if it exists
+    [[ -f ".env" ]] && docker_args+=(--env-file .env)
 
-	# Set up Claude Code configuration in container
-	local host_system_claude_dir
-	host_system_claude_dir=$(find_claude_config_dir)
-	local project_claude_dir="$current_dir/.claude"
+    # Enable Docker access if requested
+    if [[ "$docker_access" = true ]]; then
+        # Check for Docker socket locations (Linux and macOS with Docker Desktop)
+        if [[ -S "/var/run/docker.sock" ]]; then
+            log "Enabling Docker access via /var/run/docker.sock"
+            docker_args+=(-v "/var/run/docker.sock":"/var/run/docker.sock")
+        elif [[ -S "$HOME/.docker/run/docker.sock" ]]; then
+            log "Enabling Docker access via $HOME/.docker/run/docker.sock"
+            docker_args+=(-v "$HOME/.docker/run/docker.sock":"/var/run/docker.sock")
+        else
+            warn "Docker socket not found - Docker access may not work"
+            warn "Tried: /var/run/docker.sock, $HOME/.docker/run/docker.sock"
+        fi
+    fi
 
-	# Determine the target user's home directory in container
-	local container_home
-	if [[ "$host_uid" = "1000" ]]; then
-		container_home="/home/node"
-	else
-		container_home="/home/hostuser"
-	fi
+    # Set up Claude Code configuration in container
+    local host_system_claude_dir
+    host_system_claude_dir=$(find_claude_config_dir)
+    local project_claude_dir="$current_dir/.claude"
 
-	# Let Claude Code auto-detect its config directory (don't override with CLAUDE_CONFIG_DIR)
+    # Determine the target user's home directory in container
+    local container_home
+    if [[ "$host_uid" = "1000" ]]; then
+        container_home="/home/node"
+    else
+        container_home="/home/hostuser"
+    fi
 
-	# Create temporary directory for credentials extraction
-	local temp_creds_dir
-	temp_creds_dir=$(mktemp -d)
-	trap 'rm -rf "$temp_creds_dir"' EXIT
+    # Let Claude Code auto-detect its config directory (don't override with CLAUDE_CONFIG_DIR)
 
-	# Mount system Claude config directory (read-write for state updates)
-	log "Mounting Claude config directory: $host_system_claude_dir → $container_home/.claude"
-	docker_args+=(-v "$host_system_claude_dir":"$container_home/.claude")
+    # Create temporary directory for credentials extraction
+    local temp_creds_dir
+    temp_creds_dir=$(mktemp -d)
+    trap 'rm -rf "$temp_creds_dir"' EXIT
 
-	# Extract fresh credentials from keychain for macOS
-	if command -v security &>/dev/null; then
-		local keychain_creds
-		keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
-		if [[ -n "$keychain_creds" ]]; then
-			echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
-			chmod 600 "$temp_creds_dir/.credentials.json"
-			# Mount the fresh credentials over the system directory's credentials
-			docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
-			log "Mounting fresh credentials from macOS Keychain"
-		fi
-	fi
+    # Mount system Claude config directory (read-write for state updates)
+    log "Mounting Claude config directory: $host_system_claude_dir → $container_home/.claude"
+    docker_args+=(-v "$host_system_claude_dir":"$container_home/.claude")
 
-	# Mount main .claude.json from home directory (this is separate from .claude/)
-	if [[ -f "$HOME/.claude.json" ]]; then
-		log "Mounting main .claude.json from home directory"
-		docker_args+=(-v "$HOME/.claude.json":"$container_home/.claude.json")
-	fi
+    # Extract fresh credentials from keychain for macOS
+    if command -v security &>/dev/null; then
+        local keychain_creds
+        keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+        if [[ -n "$keychain_creds" ]]; then
+            echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
+            chmod 600 "$temp_creds_dir/.credentials.json"
+            # Mount the fresh credentials over the system directory's credentials
+            docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
+            log "Mounting fresh credentials from macOS Keychain"
+        fi
+    fi
 
-	# Mount project-specific .claude directory (read-write for project settings)
-	if [[ -d "$project_claude_dir" ]]; then
-		log "Mounting project Claude config from $project_claude_dir (read-write)"
-		docker_args+=(-v "$project_claude_dir":"$project_claude_dir")
-	fi
+    # Mount main .claude.json from home directory (this is separate from .claude/)
+    if [[ -f "$HOME/.claude.json" ]]; then
+        log "Mounting main .claude.json from home directory"
+        docker_args+=(-v "$HOME/.claude.json":"$container_home/.claude.json")
+    fi
 
-	# Bind mount common config files
-	[[ -f "$HOME/.gitconfig" ]] && docker_args+=(-v "$HOME/.gitconfig":"$container_home/.gitconfig:ro")
-	[[ -d "$HOME/.ssh" ]] && docker_args+=(-v "$HOME/.ssh":"$container_home/.ssh:ro")
+    # Mount project-specific .claude directory (read-write for project settings)
+    if [[ -d "$project_claude_dir" ]]; then
+        log "Mounting project Claude config from $project_claude_dir (read-write)"
+        docker_args+=(-v "$project_claude_dir":"$project_claude_dir")
+    fi
 
-	# Run the container (entrypoint will handle user setup)
-	if [[ "$shell_mode" = true ]]; then
-		if [[ ${#claude_args[@]} -eq 0 ]]; then
-			# Interactive shell mode
-			docker run "${docker_args[@]}" "$IMAGE_NAME" bash
-		else
-			# Shell command mode - execute the provided command
-			docker run "${docker_args[@]}" "$IMAGE_NAME" bash -c "${claude_args[*]}"
-		fi
-	else
-		if [[ ${#claude_args[@]} -eq 0 ]]; then
-			docker run "${docker_args[@]}" "$IMAGE_NAME"
-		else
-			docker run "${docker_args[@]}" "$IMAGE_NAME" claude --dangerously-skip-permissions "${claude_args[@]}"
-		fi
-	fi
+    # Bind mount common config files
+    [[ -f "$HOME/.gitconfig" ]] && docker_args+=(-v "$HOME/.gitconfig":"$container_home/.gitconfig:ro")
+    [[ -d "$HOME/.ssh" ]] && docker_args+=(-v "$HOME/.ssh":"$container_home/.ssh:ro")
+
+    # Run the container (entrypoint will handle user setup)
+    if [[ "$shell_mode" = true ]]; then
+        if [[ ${#claude_args[@]} -eq 0 ]]; then
+            # Interactive shell mode
+            docker run "${docker_args[@]}" "$IMAGE_NAME" bash
+        else
+            # Shell command mode - execute the provided command
+            docker run "${docker_args[@]}" "$IMAGE_NAME" bash -c "${claude_args[*]}"
+        fi
+    else
+        if [[ ${#claude_args[@]} -eq 0 ]]; then
+            docker run "${docker_args[@]}" "$IMAGE_NAME"
+        else
+            docker run "${docker_args[@]}" "$IMAGE_NAME" claude --dangerously-skip-permissions "${claude_args[@]}"
+        fi
+    fi
 }
 
 # Handle command line arguments
@@ -580,129 +581,141 @@ custom_packages=()
 docker_access=false
 
 while [[ $# -gt 0 ]]; do
-	case $1 in
-	--rebuild)
-		rebuild_image=true
-		shift
-		;;
-	--self-update)
-		update_claudito
-		exit 0
-		;;
-	--version | -v)
-		show_version
-		exit 0
-		;;
-	--info)
-		show_info
-		exit 0
-		;;
-	--shell)
-		shell_mode=true
-		shift
-		# Collect remaining arguments as shell command
-		while [[ $# -gt 0 ]]; do
-			claude_args+=("$1")
-			shift
-		done
-		;;
-	--env | -e)
-		if [[ $# -lt 2 ]]; then
-			error "--env requires an argument (KEY=VALUE or KEY)"
-			exit 1
-		fi
-		custom_env_vars+=("$2")
-		shift 2
-		;;
-	--packages | -p)
-		if [[ $# -lt 2 ]]; then
-			error "--packages requires an argument (package1,package2,...)"
-			exit 1
-		fi
-		IFS=',' read -ra ADDR <<<"$2"
-		for pkg in "${ADDR[@]}"; do
-			custom_packages+=("$pkg")
-		done
-		shift 2
-		;;
-	--docker)
-		docker_access=true
-		shift
-		;;
-	--help | -h)
-		echo "claudito - Secure Claude Code Container"
-		echo ""
-		echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
-		echo ""
-		echo "Options:"
-		echo "  --rebuild         Force rebuild of Docker image"
-		echo "  --self-update     Update claudito to latest version"
-		echo "  --version, -v     Show version information"
-		echo "  --info            Show system information and readiness status"
-		echo "  --shell [cmd...]  Start interactive shell or run shell command"
-		echo "  --env, -e KEY=VAL Set environment variable in container"
-		echo "  --packages, -p    Install additional apt packages into container"
-		echo "  --docker          Enable Docker access (bind mount Docker socket)"
-		echo "  --help, -h        Show this help message"
-		echo ""
-		echo "All other arguments are passed to Claude Code inside the container."
-		echo ""
-		echo "Environment Variables:"
-		echo "  - Automatically loads .env file if present"
-		echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
-		echo "  - Use --env to set custom variables"
-		echo ""
-		echo "Requirements:"
-		echo "  - Docker installed and running"
-		echo "  - Claude Code authenticated (run \`claude\` and login)"
-		exit 0
-		;;
-	*)
-		# Pass all other arguments to Claude
-		claude_args+=("$1")
-		shift
-		;;
-	esac
+    case $1 in
+        --rebuild)
+            rebuild_image=true
+            shift
+            ;;
+        --self-update)
+            update_claudito
+            exit 0
+            ;;
+        --version | -v)
+            show_version
+            exit 0
+            ;;
+        --info)
+            show_info
+            exit 0
+            ;;
+        --cleanup)
+            log "Cleaning up claudito containers..."
+            containers=$(docker ps -a --format "{{.Names}}" | grep "^claudito-" || true)
+            if [[ -n "$containers" ]]; then
+                echo "$containers" | xargs docker rm -f
+                log "Cleanup complete"
+            else
+                log "No claudito containers found"
+            fi
+            exit 0
+            ;;
+        --shell)
+            shell_mode=true
+            shift
+            # Collect remaining arguments as shell command
+            while [[ $# -gt 0 ]]; do
+                claude_args+=("$1")
+                shift
+            done
+            ;;
+        --env | -e)
+            if [[ $# -lt 2 ]]; then
+                error "--env requires an argument (KEY=VALUE or KEY)"
+                exit 1
+            fi
+            custom_env_vars+=("$2")
+            shift 2
+            ;;
+        --packages | -p)
+            if [[ $# -lt 2 ]]; then
+                error "--packages requires an argument (package1,package2,...)"
+                exit 1
+            fi
+            IFS=',' read -ra ADDR <<<"$2"
+            for pkg in "${ADDR[@]}"; do
+                custom_packages+=("$pkg")
+            done
+            shift 2
+            ;;
+        --docker)
+            docker_access=true
+            shift
+            ;;
+        --help | -h)
+            echo "claudito - Secure Claude Code Container"
+            echo ""
+            echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
+            echo ""
+            echo "Options:"
+            echo "  --rebuild         Force rebuild of Docker image"
+            echo "  --self-update     Update claudito to latest version"
+            echo "  --version, -v     Show version information"
+            echo "  --info            Show system information and readiness status"
+            echo "  --cleanup         Remove all claudito containers"
+            echo "  --shell [cmd...]  Start interactive shell or run shell command"
+            echo "  --env, -e KEY=VAL Set environment variable in container"
+            echo "  --packages, -p    Install additional apt packages into container"
+            echo "  --docker          Enable Docker access (bind mount Docker socket)"
+            echo "  --help, -h        Show this help message"
+            echo ""
+            echo "All other arguments are passed to Claude Code inside the container."
+            echo ""
+            echo "Environment Variables:"
+            echo "  - Automatically loads .env file if present"
+            echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
+            echo "  - Use --env to set custom variables"
+            echo ""
+            echo "Requirements:"
+            echo "  - Docker installed and running"
+            echo "  - Claude Code authenticated (run \`claude\` and login)"
+            exit 0
+            ;;
+        *)
+            # Pass all other arguments to Claude
+            claude_args+=("$1")
+            shift
+            ;;
+    esac
 done
 
 # Main execution flow
 main() {
-	log "Starting claudito..."
+    log "Starting claudito..."
 
-	check_docker
-	verify_claude_authentication
+    check_docker
+    verify_claude_authentication
 
-	# Determine whether to pull pre-built image or build locally
-	if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-		# No local image exists
-		if should_use_prebuilt_image; then
-			# Try to pull pre-built image, fallback to build
-			if ! pull_prebuilt_image; then
-				build_image
-			fi
-		else
-			# Build locally due to customizations
-			if [[ "$rebuild_image" = true ]]; then
-				log "Rebuilding claudito image..."
-			elif [[ ${#custom_packages[@]} -gt 0 ]]; then
-				log "Custom packages specified, building image..."
-			fi
-			build_image
-		fi
-	elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
-		# Force rebuild requested or customizations specified
-		if [[ ${#custom_packages[@]} -gt 0 ]]; then
-			log "Custom packages specified, rebuilding image..."
-		else
-			log "Rebuilding claudito image..."
-		fi
-		docker image rm "$IMAGE_NAME" &>/dev/null || true
-		build_image
-	else
-		log "Using existing claudito image"
-	fi
+    # Determine whether to pull pre-built image or build locally
+    if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+        # No local image exists
+        if should_use_prebuilt_image; then
+            # Try to pull pre-built image, fallback to build
+            if ! pull_prebuilt_image; then
+                build_image
+            fi
+        else
+            # Build locally due to customizations
+            if [[ "$rebuild_image" = true ]]; then
+                log "Rebuilding claudito image..."
+            elif [[ ${#custom_packages[@]} -gt 0 ]]; then
+                log "Custom packages specified, building image..."
+            fi
+            build_image
+        fi
+    elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
+        # Force rebuild requested or customizations specified
+        if [[ ${#custom_packages[@]} -gt 0 ]]; then
+            log "Custom packages specified, rebuilding image..."
+        else
+            log "Rebuilding claudito image..."
+        fi
+        docker image rm "$IMAGE_NAME" &>/dev/null || true
+        build_image
+    else
+        log "Using existing claudito image"
+    fi
 
-	run_container
+    run_container
 }
 
 main
