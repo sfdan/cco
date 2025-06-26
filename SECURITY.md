@@ -50,7 +50,7 @@ ccon addresses these vulnerabilities through strict containerization:
 
 ### Credential Protection
 - **Runtime extraction**: Fresh credentials extracted from keychain/filesystem for each session
-- **Read-only mounting**: Claude configuration mounted read-only
+- **Selective read-only mounting**: Fresh keychain credentials mounted read-only; system config mounted for state updates
 - **No credential persistence**: No credentials stored in Docker images
 - **No credential modification**: Claude cannot alter authentication data
 

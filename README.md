@@ -71,7 +71,7 @@ ccon
 
 # Direct commands  
 ccon "analyze this codebase"
-ccon --resume
+ccon --resume  # Claude Code option passed through
 
 # Get help
 ccon --help
@@ -82,8 +82,12 @@ ccon --help
 # Rebuild the protective layer
 ccon --rebuild
 
+# System information and status
+ccon --info
+
 # Shell access for inspection
 ccon --shell
+ccon --shell 'ls -la'  # Run shell commands
 
 # Custom environment
 ccon --env API_KEY=sk-123
@@ -93,6 +97,26 @@ ccon --packages terraform,kubectl
 
 # Enable Docker access
 ccon --docker
+
+# Update ccon installation
+ccon --self-update
+
+# Clean up containers
+ccon --cleanup
+```
+
+## Command Pass-through
+
+ccon acts as a wrapper - any options it doesn't recognize get passed directly to Claude Code:
+
+```bash
+# These Claude Code options work normally
+ccon --resume
+ccon --model claude-3-5-sonnet-20241022 "write tests"
+ccon --no-clipboard "analyze this file"
+
+# Mix ccon and Claude options
+ccon --env DEBUG=1 --resume  # ccon + Claude options
 ```
 
 ## Configuration
@@ -120,8 +144,8 @@ ccon
 ### Authentication
 ccon automatically finds your Claude credentials:
 - **macOS**: Extracts from Keychain
-- **Linux**: Uses `~/.claude/.credentials.json`
-- **Fallback**: `ANTHROPIC_API_KEY` variable
+- **Linux**: Uses `~/.claude/.credentials.json` or config directory
+- **Environment**: `ANTHROPIC_API_KEY` passed through to container
 
 ## Architecture
 

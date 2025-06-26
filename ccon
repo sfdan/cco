@@ -664,6 +664,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --help, -h        Show this help message"
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
+            echo "This means all Claude Code options (--resume, --model, etc.) work normally."
             echo ""
             echo "Environment Variables:"
             echo "  - Automatically loads .env file if present"
