@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: nikvdp/claudito
+  IMAGE_NAME: nikvdp/ccon
 
 jobs:
   build:

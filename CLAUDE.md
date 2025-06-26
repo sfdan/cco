@@ -1,4 +1,4 @@
-# Claudito - Secure Claude Code Container
+# ccon - A Thin Protective Layer for Claude
 
 A minimal, secure way to run Claude Code in a Docker container with proper authentication handling.
 
@@ -20,7 +20,7 @@ A minimal, secure way to run Claude Code in a Docker container with proper authe
 ## Components
 
 - `Dockerfile`: Based on Anthropic's devcontainer with enhanced tooling
-- `claudito`: Main script that handles build/run logic
+- `ccon`: Main script that handles build/run logic
 - Authentication auto-detection for both subscription and API key auth
 
 ## Testing and Debugging
@@ -30,13 +30,13 @@ A minimal, secure way to run Claude Code in a Docker container with proper authe
 ### Testing Container Environment
 ```bash
 # Run one-off commands inside container
-./claudito --shell 'env | grep CLAUDE'
+./ccon --shell 'env | grep CLAUDE'
 
 # Test Claude Code non-interactively
-./claudito "what is 2+2?"
+./ccon "what is 2+2?"
 
 # Debug configuration
-./claudito --shell "ls -la ~/.claude"
+./ccon --shell "ls -la ~/.claude"
 ```
 
 ### Development Sanity Check Suite
@@ -45,21 +45,21 @@ Before committing major changes, always run this test suite:
 
 ```bash
 # 1. Basic functionality
-./claudito "what is 2+2?"
+./ccon "what is 2+2?"
 
 # 2. Shell mode
-./claudito --shell whoami
-./claudito --shell 'echo "HOME: $HOME" && id && pwd'
+./ccon --shell whoami
+./ccon --shell 'echo "HOME: $HOME" && id && pwd'
 
 # 3. UV/Python environment
-./claudito --shell 'uv --version'
-./claudito --shell 'cd /tmp && uv init test-sanity && cd test-sanity && ls -la'
+./ccon --shell 'uv --version'
+./ccon --shell 'cd /tmp && uv init test-sanity && cd test-sanity && ls -la'
 
 # 4. Claude Code integration
-./claudito "create a simple Python project with uv"
+./ccon "create a simple Python project with uv"
 
 # 5. Rebuild capability
-./claudito --rebuild
+./ccon --rebuild
 ```
 
 **Success criteria**: No permission errors, no authentication prompts, no hanging, proper user identity and environment.
@@ -114,7 +114,7 @@ host:~/.claude → container:/home/user/.claude:ro
 host:$PROJECT/.claude → container:$PROJECT/.claude:rw
 
 # Fresh credentials (read-only)
-host:/tmp/claudito-creds-$$ → container:/home/user/.claude/.credentials.json:ro
+host:/tmp/ccon-creds-$$ → container:/home/user/.claude/.credentials.json:ro
 ```
 
 ### Environment Variables
