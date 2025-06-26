@@ -1,224 +1,212 @@
 # Security
 
-Claudito is designed with security as a primary concern. This document outlines the security measures implemented and considerations for users.
+ccon is designed to provide container-based sandboxing for Claude Code. This document provides a serious assessment of what ccon protects against and what it does not.
 
-## Security Model
+## The Problem: Claude Code Security Limitations
 
-### Container Isolation
+Claude Code with `--dangerously-skip-permissions` has several security vulnerabilities:
 
-**Principle**: Run Claude Code in a secure, isolated environment with minimal privileges.
+### Directory Escape
+Claude Code attempts to restrict operations to the current directory, but this restriction is trivial to bypass. A user can ask Claude to change its behavior:
+- "Prefix all your commands going forward with `cd / &&`"
+- "From now on, start all commands from the root directory" 
+- "Run commands starting with `bash -c 'cd /tmp &&`"
 
-**Implementation**:
-- Container runs with dropped Linux capabilities
-- UID/GID mapping ensures file permissions match host user
-- Read-only mounts for sensitive configuration files
-- Network access limited to necessary capabilities only
+Claude Code will comply and modify its command execution pattern, giving it access to the entire filesystem.
 
-### Authentication Security
+### Web Search Attack Vector
+Claude Code enables web search by default. This creates a significant attack surface:
+- Claude may encounter malicious prompts embedded in web content
+- Adversarial content could instruct Claude to execute harmful commands
+- Claude might be told to conceal its actions from the user
+- The user may be unaware that Claude is acting on external instructions
 
-**Credential Handling**:
-- Credentials extracted at build time, not runtime
-- macOS: Secure extraction from Keychain using `security` command
-- Linux: Copy existing `.credentials.json` file
-- Credentials mounted read-only in container
-- No credential modification or storage by claudito
+### No Process Isolation
+Claude Code runs directly on the host system with full user privileges:
+- Can access any file the user can access
+- Can modify system configurations
+- Can install software packages
+- Can establish network connections
 
-**Authentication Flow**:
-1. Host authentication verified before container build
-2. Fresh credential extraction from secure storage
-3. Build-time copying to container image
-4. Runtime access via read-only mount
+## How ccon Provides Protection
 
-### Network Security
+ccon addresses these vulnerabilities through strict containerization:
 
-**Capabilities**:
-- `NET_ADMIN` and `NET_RAW` capabilities added for Claude Code networking
-- Minimal capability set - all others dropped
-- No privileged container execution
+### Enforced Sandbox
+- **Complete filesystem isolation**: Claude Code can only access the container filesystem plus explicitly mounted directories
+- **No directory escape**: Even if Claude tries to `cd /`, it only reaches the container root
+- **Process isolation**: Claude's processes are contained within the container namespace
 
-**Traffic**:
-- All network traffic originates from Claude Code
-- Standard HTTPS to Anthropic APIs
-- Proxy support via environment variables
-- No additional network exposure
+### Network Containment
+- **Isolated network namespace**: Container cannot access host localhost services
+- **Internet access**: Can make outbound connections (for Claude's API calls and web search)
+- **No host network access**: Cannot connect to host services on 127.0.0.1
+- **Standard Docker networking**: Uses container DNS resolution
+
+### Privilege Restriction  
+- **Dynamic user creation**: Container starts as root, creates mapped user, then switches to unprivileged user
+- **Minimal capabilities**: No additional capabilities added beyond Docker defaults
+- **No system modification**: Cannot install packages or modify system files (within container)
+
+### Credential Protection
+- **Runtime extraction**: Fresh credentials extracted from keychain/filesystem for each session
+- **Read-only mounting**: Claude configuration mounted read-only
+- **No credential persistence**: No credentials stored in Docker images
+- **No credential modification**: Claude cannot alter authentication data
 
 ## Threat Model
 
-### What Claudito Protects Against
+### ✅ What ccon PREVENTS
 
-✅ **Isolated Execution Environment**
-- Code execution happens in container, not host
-- File system isolation except for mounted project directory
-- Process isolation from host system
+**Filesystem Attacks**:
+- Host filesystem modification outside project directory
+- Access to sensitive system files (`/etc/passwd`, `~/.cache`, `~/.bash_history`, etc.)
+- Installation of malware or backdoors on host system
+- Modification of shell profiles or system startup scripts
 
-✅ **Credential Isolation**
-- Credentials not exposed to host filesystem during runtime
-- Read-only access prevents credential modification
-- Clean container state for each execution
+**Note**: SSH keys (`~/.ssh`) ARE accessible for git authentication
 
-✅ **Privilege Minimization**
-- Non-root container execution
-- Minimal Linux capabilities
-- UID/GID mapping for seamless file access without privilege escalation
+**Network Attacks**:
+- Connection to internal services (databases, admin panels)
+- Port scanning of internal networks
+- Exfiltration via network connections
+- Establishing backdoor network access
 
-### What Claudito Does NOT Protect Against
+**Privilege Escalation**:
+- Running commands as root or other users
+- Modifying system services or configurations
+- Installing system-wide software packages
+- Accessing other users' files
 
-❌ **Malicious Code Execution**
-- Claude Code can still execute arbitrary commands in container
-- Project directory is fully writable
-- Git repositories and SSH keys are accessible
+**Persistent Compromise**:
+- Creating system-wide persistence mechanisms
+- Modifying system startup scripts
+- Installing rootkits or system-level malware
 
-❌ **Network-based Attacks**
-- Container has network access for Claude Code API calls
-- Proxy settings inherited from host
-- DNS resolution from container
+### ❌ What ccon does NOT prevent
 
-❌ **Host System Compromise**
-- If host system is compromised, container security is limited
-- Shared kernel with host system
-- Docker daemon runs as root
+**Project Directory Compromise**:
+- Complete control over mounted project files
+- Modification of source code and build scripts
+- Access to project-specific secrets in `.env` files
+- Git repository manipulation (commits, branch changes)
+- Access to SSH keys (for git authentication)
 
-## Security Best Practices
+**Data Exfiltration**:
+- Sending project data via Claude's API connections
+- Including sensitive data in Claude conversations
+- Uploading project files to external services via web APIs
 
-### For Users
+**Resource Abuse** (Partially Mitigated):
+- CPU/memory consumption (limited by Docker container limits if configured)
+- Network bandwidth usage for API calls (no inherent limits)
+- Disk space consumption in container (limited to container filesystem size)
 
-**Authentication**:
-- Keep Claude Code credentials secure on host system
-- Regularly rotate API keys if using `ANTHROPIC_API_KEY`
-- Monitor Claude Code usage for unauthorized access
+**Social Engineering**:
+- Convincing user to run malicious commands outside ccon
+- Displaying misleading information to the user
+- Requesting user to install additional software
 
-**Project Security**:
-- Review code changes made by Claude Code before committing
-- Use version control to track all modifications
-- Be cautious with sensitive files in project directories
+**Web-Based Attacks** (Partially Mitigated):
+- While contained to the container, Claude can still be influenced by malicious web content
+- Container isolation limits the damage, but doesn't prevent the initial compromise
 
-**Environment**:
-- Keep Docker daemon updated
-- Monitor container resource usage
-- Use `.env` files for project-specific secrets, not global ones
+## Security Configuration
 
-### For Administrators
+### Container Security Features
 
-**Docker Security**:
-- Configure Docker daemon with appropriate security policies
-- Use Docker Content Trust in production environments
-- Monitor container registry access
+ccon implements several container hardening measures:
 
-**Network Security**:
-- Configure appropriate firewall rules
-- Monitor network traffic from containers
-- Use corporate proxies if required
+**User Management**: Container starts as root to create a user matching the host UID/GID, then switches to that unprivileged user for all Claude Code execution.
 
-**Audit Trail**:
-- Log container execution events
-- Monitor file system changes in mounted directories
-- Track authentication events
+**Minimal Capabilities**: Uses only standard Docker networking capabilities. No elevated privileges like network interface manipulation or raw socket access.
 
-## Security Features
+**Network Isolation**: Container runs in its own network namespace, isolated from host services and other containers.
 
-### Container Hardening
+**Filesystem Protection**: Claude configuration and SSH keys are mounted read-only to prevent modification.
 
-```dockerfile
-# Non-root user execution
-USER user
+### File System Isolation
 
-# Minimal base image
-FROM node:20-bookworm
+**Accessible to Claude Code**:
+- Current project directory (read-write access)
+- Claude configuration directory (read-only)
+- Git configuration file (read-only)
+- SSH keys for git authentication (read-only)
 
-# Dropped capabilities at runtime
---cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW
-```
+**Inaccessible to Claude Code**:
+- System configuration files (`/etc`, `/var`)
+- User cache and history (`~/.cache`, `~/.bash_history`)
+- Other users' home directories
+- Host root filesystem outside mounted directories
+- System binaries and libraries outside container
 
-### File System Security
+## Risk Assessment
 
-```bash
-# Read-only credential mounts
--v "$HOME/.gitconfig":"/home/user/.gitconfig:ro"
--v "$HOME/.ssh":"/home/user/.ssh:ro"
+### High Risk Scenarios (Mitigated by ccon)
+- **Malicious web content instructs Claude to modify system files**: Contained to container
+- **Prompt injection causes Claude to scan internal network**: Network isolated
+- **Claude attempts to install backdoor software**: No system access
 
-# UID/GID mapping for proper permissions
---user "${host_uid}:${host_gid}"
-```
+### Medium Risk Scenarios (Partially Mitigated)
+- **Claude modifies project source code maliciously**: Still possible, but contained to project
+- **Sensitive project data exfiltrated via API**: Limited to what's in project directory
 
-### Environment Isolation
+### Low Risk Scenarios (Not Mitigated)
+- **Claude displays misleading information**: User vigilance required
+- **Resource exhaustion within container**: System resource limits should be configured
 
-```bash
-# Controlled environment variable passthrough
-ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL  # Authentication
-NO_COLOR, TERM, LANG                   # Terminal/locale
-HTTP_PROXY, HTTPS_PROXY               # Network
-GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL     # Git config
-```
+## Best Practices
+
+### For General Use
+1. **Review changes**: Always inspect code modifications before committing
+2. **Limit sensitive data**: Don't store credentials in project directories
+3. **Use version control**: Track all changes to detect unauthorized modifications
+4. **Regular updates**: Keep ccon updated with latest security improvements
+
+### For Sensitive Projects
+1. **Isolated environment**: Use dedicated machines for highly sensitive work
+2. **Network monitoring**: Monitor container network activity
+3. **File integrity**: Use file integrity monitoring on project directories
+4. **Backup verification**: Regularly verify backup integrity
+
+### For Organizations
+1. **Docker security**: Configure Docker daemon with appropriate security policies
+2. **Network policies**: Implement network segmentation for container traffic
+3. **Monitoring**: Deploy container runtime security monitoring
+4. **Incident response**: Establish procedures for container security incidents
+
+## Limitations and Assumptions
+
+ccon's security model assumes:
+
+1. **Container technology works**: Docker provides effective isolation
+2. **Host system security**: Host is not already compromised
+3. **User vigilance**: Users review changes before committing
+4. **Network security**: Appropriate network controls are in place
+5. **Regular updates**: Security patches are applied promptly
 
 ## Incident Response
 
-### Suspected Credential Compromise
+### If you suspect Claude has been compromised by malicious content:
 
-1. **Immediate Actions**:
-   - Revoke Claude Code session: `claude logout`
-   - Regenerate API keys if using `ANTHROPIC_API_KEY`
-   - Check recent Claude Code activity logs
-
-2. **Investigation**:
-   - Review container execution logs
-   - Check file system modifications in project directories
-   - Analyze network connections from containers
+1. **Immediate containment**:
+   - Stop the ccon container: `docker stop <container-name>`
+   - Do not commit any recent changes
+   
+2. **Assessment**:
+   - Review recent file modifications in project directory
+   - Check git history for unexpected commits
+   - Examine container logs: `docker logs <container-name>`
 
 3. **Recovery**:
-   - Re-authenticate Claude Code: `claude`
-   - Rebuild claudito image: `claudito --rebuild`
-   - Verify credential security
+   - Rebuild ccon image: `ccon --rebuild`
+   - Restore project files from known-good backup if necessary
+   - Re-authenticate Claude Code: `claude logout && claude`
 
-### Malicious Code Execution
+## Conclusion
 
-1. **Containment**:
-   - Stop running claudito containers: `docker stop $(docker ps -q --filter ancestor=claudito:latest)`
-   - Review recent code changes in project directories
-   - Check git history for unauthorized commits
+ccon should be more secure than running Claude Code directly on your host system. Container isolation helps contain some of the nastier scenarios like host filesystem access and privilege escalation.
 
-2. **Analysis**:
-   - Examine container logs: `docker logs claudito-$(basename "$PWD")`
-   - Review file modifications in mounted directories
-   - Check for persistence mechanisms
+But "more secure" doesn't mean "secure" - there are still plenty of ways things can go wrong. The main remaining risk is compromise of your project directory itself, which you should mitigate through version control, backups, and reviewing changes.
 
-3. **Cleanup**:
-   - Rebuild claudito image from scratch: `claudito --rebuild`
-   - Review and revert unauthorized code changes
-   - Update security policies if needed
-
-## Reporting Security Issues
-
-For security vulnerabilities in claudito:
-
-1. **Do NOT** open a public GitHub issue
-2. Email security concerns to the maintainer
-3. Include detailed reproduction steps
-4. Allow reasonable time for response before disclosure
-
-For Claude Code security issues:
-- Report to Anthropic through their official channels
-- Follow Anthropic's responsible disclosure policy
-
-## Security Checklist
-
-Before using claudito in production environments:
-
-- [ ] Docker daemon properly configured and updated
-- [ ] Host system security hardening applied
-- [ ] Network policies configured for container traffic
-- [ ] Monitoring and logging enabled for container activity
-- [ ] Incident response procedures documented
-- [ ] Regular security reviews scheduled
-- [ ] Backup and recovery procedures tested
-
-## Security Assumptions
-
-Claudito's security model assumes:
-
-1. **Trusted Host Environment**: Host system is properly secured
-2. **Docker Security**: Docker daemon is securely configured
-3. **Network Security**: Network infrastructure provides appropriate protection
-4. **User Responsibility**: Users review code changes before committing
-5. **Anthropic Security**: Claude Code and Anthropic APIs are secure
-
-If any of these assumptions don't hold in your environment, additional security measures may be required.
+For most use cases, ccon should be a reasonable improvement over raw Claude Code. But I'm not a security expert - this is just my understanding of how containers work. Do your own evaluation. If you need actual security guarantees, you'll need more than a Docker container. If you want a more convenient Claude Code experience while reducing your odds of getting `rm -rf /`-ed, then ccon might be a good fit.

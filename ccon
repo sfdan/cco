@@ -432,8 +432,6 @@ run_container() {
     local docker_args=(
         --rm
         --name "$CONTAINER_NAME"
-        --cap-add=NET_ADMIN
-        --cap-add=NET_RAW
         --user "root"
         -e "HOST_UID=${host_uid}"
         -e "HOST_GID=${host_gid}"

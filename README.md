@@ -172,13 +172,15 @@ ccon "review this pull request"
 ccon --shell  # Get inside for inspection
 ```
 
-## Notes
+## Security
 
 ccon provides a significant layer of protection, but like any barrier method, it's not 100% foolproof. It's certainly better than nothing, but:
 
 - Keep your protection updated
 - Check it's working properly before each session
 - Remember that no method is perfect
+
+**For detailed security information, threat model, and limitations, see [SECURITY.md](SECURITY.md).**
 
 **Practice safe computing.**
 
