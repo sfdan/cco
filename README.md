@@ -10,20 +10,20 @@
 
 > *A thin protective layer for Claude Code*
 
-**ccon** (Claude Container, or Claude Condom - your choice) provides essential protection when Claude Code gets up close and personal with your system.
+**ccon** (Claude Container, or Claude Condom - pick your poison) provides essential protection when Claude Code gets up close and personal with your system.
 
 ## Why protection matters
 
-Running Claude Code with `--dangerously-skip-permissions` feels great - fast, responsive, no interruptions. But going in raw has risks.
+Running Claude Code with `--dangerously-skip-permissions` feels great - fast, responsive, no interruptions. But going in unprotected has risks.
 
-**ccon lets you have it both ways: all the pleasure of autonomous Claude, with a barrier between Claude and your sensitive areas.**
+**ccon lets you have it both ways: all the pleasure of autonomous Claude, with a barrier between Claude and your machine's sensitive areas.**
 
 ### The problem with exposure
-- **Unprotected Claude**: Lightning fast but vulnerable to nasty injections
+- **Unprotected Claude**: Lightning fast but vulnerable to nasty prompt injections
 - **Safe mode**: Constant permission prompts kill the flow
 
 ### Protected interaction
-- **Smooth operation**: No stopping to ask permission
+- **Smooth operation**: No more constant permission prompts
 - **Barrier protection**: Contains any unwanted side effects  
 - **Peace of mind**: Enjoy the experience without worry
 - **Easy cleanup**: Fresh environment every time
@@ -54,7 +54,7 @@ ccon "help me refactor this code"
 - **No surprises**: Everything you expect, just contained
 - **Seamless experience**: Your environment, your files, your workflow
 
-You should barely notice ccon is there, except for that reassuring feeling of safety.
+You should barely notice `ccon` is there, except for that reassuring feeling of safety.
 
 ## Installation
 
