@@ -1,3 +1,11 @@
+
+```
+• • • • • • • • • • • • • • • • • • • • • • •
+•  ᴄ ᴄ ᴏ ɴ                                  •
+•  ────────                                 •
+•  a thin protective layer for claude code  •
+• • • • • • • • • • • • • • • • • • • • • • •
+```
 # ccon
 
 > *A thin protective layer for Claude Code*
