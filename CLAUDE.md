@@ -1,8 +1,8 @@
-# ccon Development Guide for Claude
+# cco Development Guide for Claude
 
 ## What This Project Is
 
-**ccon** (Claude Container, or Claude Condom if you're so inclined) is a Docker-based containerization wrapper for Claude Code. It provides "a thin protective layer for Claude Code" - running Claude Code inside a secure container while maintaining full functionality.
+**cco** (Claude Container, or Claude Condom if you're so inclined) is a Docker-based containerization wrapper for Claude Code. It provides "a thin protective layer for Claude Code" - running Claude Code inside a secure container while maintaining full functionality.
 
 ## Core Understanding You Need
 
@@ -50,19 +50,19 @@ host:~/.claude → container:$PROJECT/.claude ❌
 ### When Something's Broken
 ```bash
 # 1. Test basic functionality
-./ccon "what is 2+2?"  # Should return "4" without auth prompts
+./cco "what is 2+2?"  # Should return "4" without auth prompts
 
 # 2. Check authentication 
-./ccon --shell "ls -la ~/.claude/.credentials.json"  # Should exist with proper ownership
+./cco --shell "ls -la ~/.claude/.credentials.json"  # Should exist with proper ownership
 
 # 3. Check user mapping
-./ccon --shell "whoami && id"  # Should match host UID, not be "I have no name!"
+./cco --shell "whoami && id"  # Should match host UID, not be "I have no name!"
 
 # 4. Check working directory
-./ccon --shell "pwd"  # Should be project directory, not /home/user
+./cco --shell "pwd"  # Should be project directory, not /home/user
 
 # 5. Nuclear option
-./ccon --rebuild  # Rebuilds everything, pulls latest Claude Code
+./cco --rebuild  # Rebuilds everything, pulls latest Claude Code
 ```
 
 ### Common Failure Patterns
@@ -105,11 +105,11 @@ Why this matters:
 ### Pre-Commit Safety Ritual
 **ALWAYS run this before committing major changes:**
 ```bash
-./ccon "what is 2+2?"                    # Basic functionality
-./ccon --shell whoami                    # User identity correct
-./ccon --shell 'uv --version'            # Python tools work
-./ccon "create a simple Python project"  # End-to-end Claude integration
-./ccon --rebuild                         # Build system healthy
+./cco "what is 2+2?"                    # Basic functionality
+./cco --shell whoami                    # User identity correct
+./cco --shell 'uv --version'            # Python tools work
+./cco "create a simple Python project"  # End-to-end Claude integration
+./cco --rebuild                         # Build system healthy
 ```
 If ANY of these fail, DO NOT commit.
 
@@ -137,22 +137,22 @@ If ANY of these fail, DO NOT commit.
 #### When Authentication Breaks
 1. Check credential extraction from Keychain/files
 2. Verify mount paths in container
-3. Test with `./ccon --shell "ls -la ~/.claude/"`
-4. Nuclear option: `./ccon --rebuild`
+3. Test with `./cco --shell "ls -la ~/.claude/"`
+4. Nuclear option: `./cco --rebuild`
 
 #### When Build Fails
 1. Check build context (should be repo directory)
 2. Verify Dockerfile exists and is accessible
 3. Check for file permission issues
-4. Try manual `docker build -t ccon:latest .`
+4. Try manual `docker build -t cco:latest .`
 
 #### When Container Behavior Changes
-1. Test user mapping with `./ccon --shell "whoami && id"`
-2. Check working directory with `./ccon --shell "pwd"`
+1. Test user mapping with `./cco --shell "whoami && id"`
+2. Check working directory with `./cco --shell "pwd"`
 3. Verify environment variables passed through correctly
 
 ### Branding Guidelines
-- **Name**: `ccon - Claude Container (or Claude Condom if you're so inclined)`
+- **Name**: `cco - Claude Container (or Claude Condom if you're so inclined)`
 - **Tagline**: `A thin protective layer for Claude Code`
 - **Tone**: Professional-first with subtle humor
 
@@ -168,7 +168,7 @@ Run the diagnostic commands above, check recent commits for changes
 Use the pre-commit safety ritual, check in container with `--shell`
 
 ### "What's safe to change?"
-- ccon script logic: generally safe
+- cco script logic: generally safe
 - Dockerfile: test carefully, affects all users
 - Experimental features: already risky, document well
 - Core auth/mounting: EXTREMELY DANGEROUS, test extensively

@@ -1,6 +1,6 @@
 # Security
 
-ccon is designed to provide container-based sandboxing for Claude Code. This document provides a serious assessment of what ccon protects against and what it does not.
+cco is designed to provide container-based sandboxing for Claude Code. This document provides a serious assessment of what cco protects against and what it does not.
 
 ## The Problem: Claude Code Security Limitations
 
@@ -28,9 +28,9 @@ Claude Code runs directly on the host system with full user privileges:
 - Can install software packages
 - Can establish network connections
 
-## How ccon Provides Protection
+## How cco Provides Protection
 
-ccon addresses these vulnerabilities through strict containerization:
+cco addresses these vulnerabilities through strict containerization:
 
 ### Enforced Sandbox
 - **Complete filesystem isolation**: Claude Code can only access the container filesystem plus explicitly mounted directories
@@ -56,7 +56,7 @@ ccon addresses these vulnerabilities through strict containerization:
 
 ## Threat Model
 
-### ✅ What ccon PREVENTS
+### ✅ What cco PREVENTS
 
 **Filesystem Attacks**:
 - Host filesystem modification outside project directory
@@ -83,7 +83,7 @@ ccon addresses these vulnerabilities through strict containerization:
 - Modifying system startup scripts
 - Installing rootkits or system-level malware
 
-### ❌ What ccon does NOT prevent
+### ❌ What cco does NOT prevent
 
 **Project Directory Compromise**:
 - Complete control over mounted project files
@@ -103,7 +103,7 @@ ccon addresses these vulnerabilities through strict containerization:
 - Disk space consumption in container (limited to container filesystem size)
 
 **Social Engineering**:
-- Convincing user to run malicious commands outside ccon
+- Convincing user to run malicious commands outside cco
 - Displaying misleading information to the user
 - Requesting user to install additional software
 
@@ -115,7 +115,7 @@ ccon addresses these vulnerabilities through strict containerization:
 
 ### Container Security Features
 
-ccon implements several container hardening measures:
+cco implements several container hardening measures:
 
 **User Management**: Container starts as root to create a user matching the host UID/GID, then switches to that unprivileged user for all Claude Code execution.
 
@@ -149,7 +149,7 @@ ccon implements several container hardening measures:
 
 **Security Implications**:
 - **Credential write access**: Claude gains ability to modify authentication credentials
-- **Race condition risk**: Multiple ccon instances could corrupt credentials (mitigated by "clondom" protection)
+- **Race condition risk**: Multiple cco instances could corrupt credentials (mitigated by "clondom" protection)
 - **Sync-back attacks**: Malicious content could potentially manipulate token refresh to corrupt host credentials
 - **Increased attack surface**: More complex credential handling creates more failure modes
 
@@ -178,7 +178,7 @@ These experimental features are disabled by default. Only enable them if you und
 
 ## Risk Assessment
 
-### High Risk Scenarios (Mitigated by ccon)
+### High Risk Scenarios (Mitigated by cco)
 - **Malicious web content instructs Claude to modify system files**: Contained to container
 - **Prompt injection causes Claude to scan internal network**: Network isolated
 - **Claude attempts to install backdoor software**: No system access
@@ -197,7 +197,7 @@ These experimental features are disabled by default. Only enable them if you und
 1. **Review changes**: Always inspect code modifications before committing
 2. **Limit sensitive data**: Don't store credentials in project directories
 3. **Use version control**: Track all changes to detect unauthorized modifications
-4. **Regular updates**: Keep ccon updated with latest security improvements
+4. **Regular updates**: Keep cco updated with latest security improvements
 
 ### For Sensitive Projects
 1. **Isolated environment**: Use dedicated machines for highly sensitive work
@@ -213,7 +213,7 @@ These experimental features are disabled by default. Only enable them if you und
 
 ## Limitations and Assumptions
 
-ccon's security model assumes:
+cco's security model assumes:
 
 1. **Container technology works**: Docker provides effective isolation
 2. **Host system security**: Host is not already compromised
@@ -226,7 +226,7 @@ ccon's security model assumes:
 ### If you suspect Claude has been compromised by malicious content:
 
 1. **Immediate containment**:
-   - Stop the ccon container: `docker stop <container-name>`
+   - Stop the cco container: `docker stop <container-name>`
    - Do not commit any recent changes
    
 2. **Assessment**:
@@ -235,14 +235,14 @@ ccon's security model assumes:
    - Examine container logs: `docker logs <container-name>`
 
 3. **Recovery**:
-   - Rebuild ccon image: `ccon --rebuild`
+   - Rebuild cco image: `cco --rebuild`
    - Restore project files from known-good backup if necessary
    - Re-authenticate Claude Code: `claude logout && claude`
 
 ## Conclusion
 
-ccon should be more secure than running Claude Code directly on your host system. Container isolation helps contain some of the nastier scenarios like host filesystem access and privilege escalation.
+cco should be more secure than running Claude Code directly on your host system. Container isolation helps contain some of the nastier scenarios like host filesystem access and privilege escalation.
 
 But "more secure" doesn't mean "secure" - there are still plenty of ways things can go wrong. The main remaining risk is compromise of your project directory itself, which you should mitigate through version control, backups, and reviewing changes.
 
-For most use cases, ccon should be a reasonable improvement over raw Claude Code. But I'm not a security expert - this is just my understanding of how containers work. Do your own evaluation. If you need actual security guarantees, you'll need more than a Docker container. If you want a more convenient Claude Code experience while reducing your odds of getting `rm -rf /`-ed, then ccon might be a good fit.
+For most use cases, cco should be a reasonable improvement over raw Claude Code. But I'm not a security expert - this is just my understanding of how containers work. Do your own evaluation. If you need actual security guarantees, you'll need more than a Docker container. If you want a more convenient Claude Code experience while reducing your odds of getting `rm -rf /`-ed, then cco might be a good fit.

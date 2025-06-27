@@ -57,7 +57,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Don't set hardcoded environment variables - let entrypoint handle this
 # Claude configuration will be mounted at runtime - no baking into image
-# ccon provides secure, thin-wrapper containerization for Claude Code
+# cco provides secure, thin-wrapper containerization for Claude Code
 
 # Set entrypoint for user management
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

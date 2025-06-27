@@ -2,25 +2,25 @@
 
 set -e
 
-# ccon - Claude Container (or Claude Condom if you're so inclined)
+# cco - Claude Container (or Claude Condom if you're so inclined)
 # A secure, minimal way to run Claude Code in a Docker container
 
 # Determine if we're running from installation or development
-if [[ -f "./Dockerfile" && -f "./ccon" ]]; then
-	# Current directory is a ccon development environment
-	CCON_INSTALLATION_DIR="$PWD"
-	echo -e "${GREEN}▶${NC} Detected ccon development environment, building locally"
-elif [[ -d "$HOME/.local/share/ccon/.git" && "$(basename "$(dirname "$0")")" != "ccon" ]]; then
+if [[ -f "./Dockerfile" && -f "./cco" ]]; then
+	# Current directory is a cco development environment
+	CCO_INSTALLATION_DIR="$PWD"
+	echo -e "${GREEN}▶${NC} Detected cco development environment, building locally"
+elif [[ -d "$HOME/.local/share/cco/.git" && "$(basename "$(dirname "$0")")" != "cco" ]]; then
 	# Running from symlink, use installation directory
-	CCON_INSTALLATION_DIR="$HOME/.local/share/ccon"
+	CCO_INSTALLATION_DIR="$HOME/.local/share/cco"
 else
 	# Running from development directory
-	CCON_INSTALLATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	CCO_INSTALLATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-IMAGE_NAME="ccon:latest"
+IMAGE_NAME="cco:latest"
 # Generate unique container name to allow concurrent sessions
-CONTAINER_NAME="ccon-$(basename "$PWD")-$(date +%s)-$$"
+CONTAINER_NAME="cco-$(basename "$PWD")-$(date +%s)-$$"
 
 # Colors for output
 RED='\033[0;31m'
@@ -161,10 +161,10 @@ sync_credentials_back() {
 	# Abort if system credentials changed during our session
 	if [[ -n "$startup_system_content" && -n "$current_system_content" && "$startup_system_content" != "$current_system_content" ]]; then
 		warn "SAFETY ABORT: System credentials were modified during session by another process"
-		warn "This could be Claude CLI, another ccon instance, or manual changes"
+		warn "This could be Claude CLI, another cco instance, or manual changes"
 		warn "Skipping sync-back to prevent credential conflicts"
 		warn "Your container's updated credentials are preserved in: $temp_creds_file"
-		warn "To manually sync: ./ccon restore-creds '$temp_creds_file'"
+		warn "To manually sync: ./cco restore-creds '$temp_creds_file'"
 		return 1
 	fi
 
@@ -234,9 +234,9 @@ should_use_prebuilt_image() {
 	fi
 
 	# Don't use pre-built if Dockerfile has been modified locally
-	if [[ -d "$CCON_INSTALLATION_DIR/.git" ]]; then
+	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local dockerfile_status
-		dockerfile_status=$(cd "$CCON_INSTALLATION_DIR" && git status --porcelain Dockerfile 2>/dev/null)
+		dockerfile_status=$(cd "$CCO_INSTALLATION_DIR" && git status --porcelain Dockerfile 2>/dev/null)
 		if [[ -n "$dockerfile_status" ]]; then
 			return 1
 		fi
@@ -247,12 +247,12 @@ should_use_prebuilt_image() {
 
 # Get the appropriate image tag for current version
 get_prebuilt_image_tag() {
-	if [[ -d "$CCON_INSTALLATION_DIR/.git" ]]; then
+	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local commit_sha
-		commit_sha=$(cd "$CCON_INSTALLATION_DIR" && git rev-parse HEAD 2>/dev/null)
-		echo "ghcr.io/nikvdp/ccon:${commit_sha}"
+		commit_sha=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse HEAD 2>/dev/null)
+		echo "ghcr.io/nikvdp/cco:${commit_sha}"
 	else
-		echo "ghcr.io/nikvdp/ccon:latest"
+		echo "ghcr.io/nikvdp/cco:latest"
 	fi
 }
 
@@ -278,12 +278,12 @@ pull_prebuilt_image() {
 build_image() {
 	local original_dir="$PWD"
 
-	log "Building ccon Docker image..."
+	log "Building cco Docker image..."
 
 	# Always build from installation directory
-	cd "$CCON_INSTALLATION_DIR" || {
-		error "ccon installation not found at $CCON_INSTALLATION_DIR"
-		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/ccon/master/install.sh | bash"
+	cd "$CCO_INSTALLATION_DIR" || {
+		error "cco installation not found at $CCO_INSTALLATION_DIR"
+		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
 		exit 1
 	}
 
@@ -305,24 +305,24 @@ build_image() {
 	log "Image built successfully"
 }
 
-# Update ccon installation
-update_ccon() {
-	if [[ ! -d "$CCON_INSTALLATION_DIR/.git" ]]; then
-		error "ccon installation not found at $CCON_INSTALLATION_DIR"
-		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/ccon/master/install.sh | bash"
+# Update cco installation
+update_cco() {
+	if [[ ! -d "$CCO_INSTALLATION_DIR/.git" ]]; then
+		error "cco installation not found at $CCO_INSTALLATION_DIR"
+		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
 		exit 1
 	fi
 
 	local original_dir="$PWD"
-	cd "$CCON_INSTALLATION_DIR"
+	cd "$CCO_INSTALLATION_DIR"
 
-	log "Updating ccon installation..."
+	log "Updating cco installation..."
 
 	# Check for local modifications
 	if ! git diff --quiet HEAD 2>/dev/null; then
-		warn "WARNING: Your ccon installation has local modifications."
+		warn "WARNING: Your cco installation has local modifications."
 		warn "Most users should reset to the latest version (this is safe)."
-		warn "Only say 'no' if you've customized ccon yourself."
+		warn "Only say 'no' if you've customized cco yourself."
 		echo
 		read -p "Reset to latest version and lose local changes? [Y/n] " -n 1 -r
 		echo
@@ -350,41 +350,41 @@ update_ccon() {
 
 # Show version information
 show_version() {
-	if [[ -d "$CCON_INSTALLATION_DIR/.git" ]]; then
+	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local version
-		version=$(cd "$CCON_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+		version=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 		local install_type="installation"
 	else
 		local version="dev"
 		local install_type="development"
 	fi
 
-	echo "ccon $version ($install_type)"
-	echo "Installation: $CCON_INSTALLATION_DIR"
+	echo "cco $version ($install_type)"
+	echo "Installation: $CCO_INSTALLATION_DIR"
 }
 
 # Show comprehensive system information and status
 show_info() {
-	echo "ccon - System Information & Status"
+	echo "cco - System Information & Status"
 	echo "=================================="
 	echo
 
 	# Version info
-	if [[ -d "$CCON_INSTALLATION_DIR/.git" ]]; then
+	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local version
-		version=$(cd "$CCON_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+		version=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 		local install_type="installation"
 		local git_status
-		git_status=$(cd "$CCON_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
+		git_status=$(cd "$CCO_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
 	else
 		local version="dev"
 		local install_type="development"
 		local git_status=""
 	fi
 
-	echo "📦 ccon Information:"
+	echo "📦 cco Information:"
 	echo "  Version: $version ($install_type)"
-	echo "  Location: $CCON_INSTALLATION_DIR"
+	echo "  Location: $CCO_INSTALLATION_DIR"
 	if [[ -n "$git_status" ]]; then
 		echo "  Git Status: Modified (local changes present)"
 	elif [[ "$install_type" == "installation" ]]; then
@@ -405,9 +405,9 @@ show_info() {
 			if docker image inspect "$IMAGE_NAME" &>/dev/null; then
 				local image_created
 				image_created=$(docker image inspect "$IMAGE_NAME" --format '{{.Created}}' | cut -d'T' -f1)
-				echo "  ccon Image: ✓ Built ($image_created)"
+				echo "  cco Image: ✓ Built ($image_created)"
 			else
-				echo "  ccon Image: ✗ Not built (run with --rebuild)"
+				echo "  cco Image: ✗ Not built (run with --rebuild)"
 			fi
 		else
 			echo "  Docker Daemon: ✗ Not running"
@@ -497,7 +497,7 @@ show_info() {
 	fi
 
 	if [[ "$ready" = true ]]; then
-		echo "  Status: ✓ Ready to use ccon"
+		echo "  Status: ✓ Ready to use cco"
 	else
 		echo "  Status: ✗ Issues found"
 		echo "  Issues:"
@@ -515,7 +515,7 @@ run_container() {
 	host_gid=$(id -g)
 	local current_dir="$PWD"
 
-	log "Starting ccon container..."
+	log "Starting cco container..."
 
 	# Remove existing container if it exists
 	docker rm -f "$CONTAINER_NAME" &>/dev/null || true
@@ -714,7 +714,7 @@ run_container() {
 
 # Backup Claude Code credentials to a safe location
 backup_credentials() {
-	local backup_dir="$HOME/.ccon-backups"
+	local backup_dir="$HOME/.cco-backups"
 	local timestamp
 	timestamp=$(date +"%Y%m%d_%H%M%S")
 	local backup_file="$backup_dir/claude-credentials.$timestamp.json"
@@ -732,7 +732,7 @@ backup_credentials() {
 			echo "$keychain_creds" >"$backup_file"
 			chmod 600 "$backup_file"
 			log "Successfully backed up Keychain credentials to: $backup_file"
-			echo "To restore: ./ccon restore-creds \"$backup_file\""
+			echo "To restore: ./cco restore-creds \"$backup_file\""
 		else
 			error "No Claude Code credentials found in macOS Keychain"
 			exit 1
@@ -747,7 +747,7 @@ backup_credentials() {
 			cp "$creds_file" "$backup_file"
 			chmod 600 "$backup_file"
 			log "Successfully backed up credentials file to: $backup_file"
-			echo "To restore: ./ccon restore-creds \"$backup_file\""
+			echo "To restore: ./cco restore-creds \"$backup_file\""
 		else
 			error "No Claude Code credentials file found at: $creds_file"
 			exit 1
@@ -758,13 +758,13 @@ backup_credentials() {
 # Restore Claude Code credentials from a backup
 restore_credentials() {
 	local backup_file="$1"
-	local backup_dir="$HOME/.ccon-backups"
+	local backup_dir="$HOME/.cco-backups"
 
 	if [[ -z "$backup_file" ]]; then
 		# Auto-select most recent backup
 		if [[ ! -d "$backup_dir" ]]; then
 			error "No backup directory found at: $backup_dir"
-			echo "Run './ccon backup-creds' first to create a backup"
+			echo "Run './cco backup-creds' first to create a backup"
 			exit 1
 		fi
 
@@ -773,7 +773,7 @@ restore_credentials() {
 		
 		if [[ -z "$backup_file" ]]; then
 			error "No backup files found in: $backup_dir"
-			echo "Run './ccon backup-creds' first to create a backup"
+			echo "Run './cco backup-creds' first to create a backup"
 			exit 1
 		fi
 
@@ -805,7 +805,7 @@ restore_credentials() {
 		local current_creds
 		current_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
 		if [[ -n "$current_creds" ]]; then
-			local current_backup_dir="$HOME/.ccon-backups"
+			local current_backup_dir="$HOME/.cco-backups"
 			mkdir -p "$current_backup_dir"
 			echo "$current_creds" >"$current_backup_dir/claude-credentials.pre-restore.$current_backup_timestamp.json"
 			log "Current credentials backed up to: $current_backup_dir/claude-credentials.pre-restore.$current_backup_timestamp.json"
@@ -874,7 +874,7 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--self-update)
-		update_ccon
+		update_cco
 		exit 0
 		;;
 	--version | -v)
@@ -886,13 +886,13 @@ while [[ $# -gt 0 ]]; do
 		exit 0
 		;;
 	--cleanup)
-		log "Cleaning up ccon containers..."
-		containers=$(docker ps -a --format "{{.Names}}" | grep "^ccon-" || true)
+		log "Cleaning up cco containers..."
+		containers=$(docker ps -a --format "{{.Names}}" | grep "^cco-" || true)
 		if [[ -n "$containers" ]]; then
 			echo "$containers" | xargs docker rm -f
 			log "Cleanup complete"
 		else
-			log "No ccon containers found"
+			log "No cco containers found"
 		fi
 		exit 0
 		;;
@@ -933,7 +933,7 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--help | -h)
-		echo "ccon - Claude Container (or Claude Condom if you're so inclined)"
+		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
 		echo "A thin protective layer for Claude Code"
 		echo ""
 		echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
@@ -947,10 +947,10 @@ while [[ $# -gt 0 ]]; do
 		echo ""
 		echo "Options:"
 		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
-		echo "  --self-update     Update ccon to latest version"
+		echo "  --self-update     Update cco to latest version"
 		echo "  --version, -v     Show version information"
 		echo "  --info            Show system information and readiness status"
-		echo "  --cleanup         Remove all ccon containers"
+		echo "  --cleanup         Remove all cco containers"
 		echo "  --shell [cmd...]  Start interactive shell or run shell command"
 		echo "  --env, -e KEY=VAL Set environment variable in container"
 		echo "  --packages, -p    Install additional apt packages into container"
@@ -967,7 +967,7 @@ while [[ $# -gt 0 ]]; do
 		echo ""
 		echo "Safety Recommendation:"
 		echo "  Before using --allow-oauth-refresh for the first time, run:"
-		echo "    ./ccon backup-creds"
+		echo "    ./cco backup-creds"
 		echo ""
 		echo "Environment Variables:"
 		echo "  - Automatically loads .env file if present"
@@ -989,7 +989,7 @@ done
 
 # Main execution flow
 main() {
-	log "Starting ccon..."
+	log "Starting cco..."
 
 	check_docker
 	verify_claude_authentication
@@ -1005,7 +1005,7 @@ main() {
 		else
 			# Build locally due to customizations
 			if [[ "$rebuild_image" = true ]]; then
-				log "Rebuilding ccon image..."
+				log "Rebuilding cco image..."
 			elif [[ ${#custom_packages[@]} -gt 0 ]]; then
 				log "Custom packages specified, building image..."
 			fi
@@ -1016,12 +1016,12 @@ main() {
 		if [[ ${#custom_packages[@]} -gt 0 ]]; then
 			log "Custom packages specified, rebuilding image..."
 		else
-			log "Rebuilding ccon image..."
+			log "Rebuilding cco image..."
 		fi
 		docker image rm "$IMAGE_NAME" &>/dev/null || true
 		build_image
 	else
-		log "Using existing ccon image"
+		log "Using existing cco image"
 	fi
 
 	run_container
