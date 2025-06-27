@@ -97,8 +97,8 @@ cco --rebuild
 cco --info
 
 # Shell access for inspection
-cco --shell
-cco --shell 'ls -la'  # Run shell commands
+cco shell
+cco shell 'ls -la'  # Run shell commands
 
 # Custom environment
 cco --env API_KEY=sk-123
@@ -110,10 +110,10 @@ cco --packages terraform,kubectl
 cco --docker
 
 # Update cco installation
-cco --self-update
+cco self-update
 
 # Clean up containers
-cco --cleanup
+cco cleanup
 ```
 
 ### Experimental features
@@ -213,6 +213,12 @@ cco "review this pull request"
 - Run `claude` first to authenticate
 - Check Claude works outside cco
 
+**Token expiration**
+- If you get authentication errors, your OAuth token may have expired
+- The containerized environment prevents automatic token refresh by default
+- **Solution**: Run `claude` directly (outside cco) to re-authenticate, then retry with cco
+- For automatic token refresh, try the experimental `--allow-oauth-refresh` flag (use with caution)
+
 **Docker problems**
 - Start Docker daemon
 - Verify with `docker info`
@@ -221,9 +227,15 @@ cco "review this pull request"
 - cco handles user mapping automatically
 - Try `cco --rebuild` if needed
 
+**Experimental features not working**
+- OAuth refresh (`--allow-oauth-refresh`) is experimental and may have issues
+- Fallback: authenticate directly with `claude` when tokens expire
+- Use credential backup/restore commands for safety: `cco backup-creds` / `cco restore-creds`
+
 ### Debug access
 ```bash
-cco --shell  # Get inside for inspection
+cco shell  # Get inside for inspection
+cco --info  # Check system status
 ```
 
 ## Security
