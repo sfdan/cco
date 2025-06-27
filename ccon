@@ -607,7 +607,7 @@ run_container() {
     local host_creds_file=""
     
     # Setup cleanup and credentials sync-back on exit
-    if [[ "$rw_config" = true ]]; then
+    if [[ "$oauth_refresh" = true ]]; then
         trap 'sync_credentials_back "$temp_creds_dir" "$original_creds_hash" "$host_creds_file" && rm -rf "$temp_creds_dir"' EXIT
     else
         trap 'rm -rf "$temp_creds_dir"' EXIT
@@ -625,8 +625,8 @@ run_container() {
             echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
             chmod 600 "$temp_creds_dir/.credentials.json"
             
-            # Store original hash for sync-back detection if --rw-config enabled
-            if [[ "$rw_config" = true ]]; then
+            # Store original hash for sync-back detection if --oauth-refresh enabled
+            if [[ "$oauth_refresh" = true ]]; then
                 if command -v sha256sum &>/dev/null; then
                     original_creds_hash=$(sha256sum "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
                 elif command -v shasum &>/dev/null; then
@@ -637,8 +637,8 @@ run_container() {
                 host_creds_file=""  # macOS uses Keychain, not file
             fi
             
-            # Mount credentials with appropriate permissions based on --rw-config
-            if [[ "$rw_config" = true ]]; then
+            # Mount credentials with appropriate permissions based on --oauth-refresh
+            if [[ "$oauth_refresh" = true ]]; then
                 docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
                 log "Mounting fresh credentials from macOS Keychain (read-write for OAuth refresh)"
             else
@@ -651,8 +651,8 @@ run_container() {
         cp "$host_system_claude_dir/.credentials.json" "$temp_creds_dir/.credentials.json"
         chmod 600 "$temp_creds_dir/.credentials.json"
         
-        # Store original hash for sync-back detection if --rw-config enabled
-        if [[ "$rw_config" = true ]]; then
+        # Store original hash for sync-back detection if --oauth-refresh enabled
+        if [[ "$oauth_refresh" = true ]]; then
             if command -v sha256sum &>/dev/null; then
                 original_creds_hash=$(sha256sum "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
             elif command -v shasum &>/dev/null; then
@@ -663,8 +663,8 @@ run_container() {
             host_creds_file="$host_system_claude_dir/.credentials.json"
         fi
         
-        # Mount credentials with appropriate permissions based on --rw-config
-        if [[ "$rw_config" = true ]]; then
+        # Mount credentials with appropriate permissions based on --oauth-refresh
+        if [[ "$oauth_refresh" = true ]]; then
             docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
             log "Mounting credentials file (read-write for OAuth refresh)"
         else
@@ -714,7 +714,7 @@ shell_mode=false
 custom_env_vars=()
 custom_packages=()
 docker_access=false
-rw_config=false
+oauth_refresh=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -777,8 +777,8 @@ while [[ $# -gt 0 ]]; do
             docker_access=true
             shift
             ;;
-        --rw-config)
-            rw_config=true
+        --oauth-refresh)
+            oauth_refresh=true
             shift
             ;;
         --help | -h)
@@ -800,8 +800,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --env, -e KEY=VAL Set environment variable in container"
             echo "  --packages, -p    Install additional apt packages into container"
             echo "  --docker          Enable Docker access (bind mount Docker socket)"
-            echo "  --rw-config       Enable read-write access to ~/.claude config (for OAuth refresh)"
-            echo "                    Automatically syncs updated tokens back to Keychain/file on exit"
+            echo "  --oauth-refresh   Enable OAuth token refresh with automatic sync-back"
+            echo "                    Allows Claude to refresh expired tokens and syncs them back"
+            echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
             echo "                    Creates timestamped backups for safety"
             echo "  --help, -h        Show this help message"
             echo ""
