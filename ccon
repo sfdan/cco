@@ -124,6 +124,89 @@ verify_claude_authentication() {
     log "Claude Code authentication verified"
 }
 
+# Sync updated credentials back to host system
+sync_credentials_back() {
+    local temp_creds_dir="$1"
+    local original_hash="$2"
+    local host_creds_file="$3"
+    local temp_creds_file="$temp_creds_dir/.credentials.json"
+    
+    # Check if credentials file exists and was potentially updated
+    if [[ ! -f "$temp_creds_file" ]]; then
+        return 0  # No credentials file to sync
+    fi
+    
+    # Calculate current hash to detect changes
+    local current_hash
+    if command -v sha256sum &>/dev/null; then
+        current_hash=$(sha256sum "$temp_creds_file" | cut -d' ' -f1)
+    elif command -v shasum &>/dev/null; then
+        current_hash=$(shasum -a 256 "$temp_creds_file" | cut -d' ' -f1)
+    else
+        # Fallback to md5 if sha256 not available
+        current_hash=$(md5sum "$temp_creds_file" 2>/dev/null | cut -d' ' -f1 || md5 -q "$temp_creds_file" 2>/dev/null)
+    fi
+    
+    # If hash unchanged, no sync needed
+    if [[ "$current_hash" = "$original_hash" ]]; then
+        return 0
+    fi
+    
+    log "Detected updated credentials, syncing back to host system..."
+    
+    # Create backup timestamp
+    local backup_timestamp
+    backup_timestamp=$(date +"%Y%m%d_%H%M%S")
+    
+    # Sync back based on platform
+    if command -v security &>/dev/null; then
+        # macOS: Backup and update Keychain
+        log "Creating backup of original Keychain credentials..."
+        local original_creds
+        original_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+        if [[ -n "$original_creds" ]]; then
+            # Save backup to temp location
+            echo "$original_creds" >"$temp_creds_dir/.credentials.backup.$backup_timestamp.json"
+            log "Backup saved to: $temp_creds_dir/.credentials.backup.$backup_timestamp.json"
+        fi
+        
+        # Update Keychain with new credentials
+        local creds_content
+        creds_content=$(cat "$temp_creds_file")
+        if security add-generic-password -U -s "Claude Code-credentials" -a "$USER" -w "$creds_content" >/dev/null 2>&1; then
+            log "Successfully updated credentials in macOS Keychain"
+        else
+            warn "Failed to update macOS Keychain, credentials may be out of sync"
+            if [[ -f "$temp_creds_dir/.credentials.backup.$backup_timestamp.json" ]]; then
+                warn "Original credentials backup available at: $temp_creds_dir/.credentials.backup.$backup_timestamp.json"
+                warn "To restore: security add-generic-password -U -s 'Claude Code-credentials' -a '$USER' -w \"\$(cat '$temp_creds_dir/.credentials.backup.$backup_timestamp.json')\""
+            fi
+        fi
+    elif [[ -n "$host_creds_file" && -f "$host_creds_file" ]]; then
+        # Linux: Backup and update credentials file
+        local backup_file="${host_creds_file}.backup.$backup_timestamp"
+        log "Creating backup of original credentials file..."
+        if cp "$host_creds_file" "$backup_file"; then
+            log "Backup saved to: $backup_file"
+            
+            # Update credentials file with new content
+            if cp "$temp_creds_file" "$host_creds_file"; then
+                log "Successfully updated credentials file: $host_creds_file"
+            else
+                warn "Failed to update credentials file: $host_creds_file"
+                warn "Restoring from backup..."
+                if cp "$backup_file" "$host_creds_file"; then
+                    warn "Successfully restored original credentials from backup"
+                else
+                    warn "Failed to restore backup! Original credentials backup available at: $backup_file"
+                fi
+            fi
+        else
+            warn "Failed to create backup, skipping credentials update for safety"
+        fi
+    fi
+}
+
 # Check if we should use pre-built image
 should_use_prebuilt_image() {
     # Don't use pre-built if explicitly rebuilding
@@ -520,25 +603,74 @@ run_container() {
     # Create temporary directory for credentials extraction
     local temp_creds_dir
     temp_creds_dir=$(mktemp -d)
-    trap 'rm -rf "$temp_creds_dir"' EXIT
+    local original_creds_hash=""
+    local host_creds_file=""
+    
+    # Setup cleanup and credentials sync-back on exit
+    if [[ "$rw_config" = true ]]; then
+        trap 'sync_credentials_back "$temp_creds_dir" "$original_creds_hash" "$host_creds_file" && rm -rf "$temp_creds_dir"' EXIT
+    else
+        trap 'rm -rf "$temp_creds_dir"' EXIT
+    fi
 
     # Mount system Claude config directory (read-write for state updates)
     log "Mounting Claude config directory: $host_system_claude_dir → $container_home/.claude"
     docker_args+=(-v "$host_system_claude_dir":"$container_home/.claude")
 
-    # Extract fresh credentials from keychain for macOS (unless --rw-config specified)
-    if command -v security &>/dev/null && [[ "$rw_config" != true ]]; then
+    # Extract fresh credentials from keychain for macOS
+    if command -v security &>/dev/null; then
         local keychain_creds
         keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
         if [[ -n "$keychain_creds" ]]; then
             echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
             chmod 600 "$temp_creds_dir/.credentials.json"
-            # Mount the fresh credentials over the system directory's credentials
-            docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
-            log "Mounting fresh credentials from macOS Keychain (read-only)"
+            
+            # Store original hash for sync-back detection if --rw-config enabled
+            if [[ "$rw_config" = true ]]; then
+                if command -v sha256sum &>/dev/null; then
+                    original_creds_hash=$(sha256sum "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
+                elif command -v shasum &>/dev/null; then
+                    original_creds_hash=$(shasum -a 256 "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
+                else
+                    original_creds_hash=$(md5sum "$temp_creds_dir/.credentials.json" 2>/dev/null | cut -d' ' -f1 || md5 -q "$temp_creds_dir/.credentials.json" 2>/dev/null)
+                fi
+                host_creds_file=""  # macOS uses Keychain, not file
+            fi
+            
+            # Mount credentials with appropriate permissions based on --rw-config
+            if [[ "$rw_config" = true ]]; then
+                docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
+                log "Mounting fresh credentials from macOS Keychain (read-write for OAuth refresh)"
+            else
+                docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
+                log "Mounting fresh credentials from macOS Keychain (read-only)"
+            fi
         fi
-    elif [[ "$rw_config" = true ]]; then
-        log "Using --rw-config: system config directory fully writable for OAuth token refresh"
+    elif [[ -f "$host_system_claude_dir/.credentials.json" ]]; then
+        # Linux: Copy from existing credentials file
+        cp "$host_system_claude_dir/.credentials.json" "$temp_creds_dir/.credentials.json"
+        chmod 600 "$temp_creds_dir/.credentials.json"
+        
+        # Store original hash for sync-back detection if --rw-config enabled
+        if [[ "$rw_config" = true ]]; then
+            if command -v sha256sum &>/dev/null; then
+                original_creds_hash=$(sha256sum "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
+            elif command -v shasum &>/dev/null; then
+                original_creds_hash=$(shasum -a 256 "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
+            else
+                original_creds_hash=$(md5sum "$temp_creds_dir/.credentials.json" 2>/dev/null | cut -d' ' -f1 || md5 -q "$temp_creds_dir/.credentials.json" 2>/dev/null)
+            fi
+            host_creds_file="$host_system_claude_dir/.credentials.json"
+        fi
+        
+        # Mount credentials with appropriate permissions based on --rw-config
+        if [[ "$rw_config" = true ]]; then
+            docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
+            log "Mounting credentials file (read-write for OAuth refresh)"
+        else
+            docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
+            log "Mounting credentials file (read-only)"
+        fi
     fi
 
     # Mount main .claude.json from home directory (this is separate from .claude/)
@@ -669,6 +801,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --packages, -p    Install additional apt packages into container"
             echo "  --docker          Enable Docker access (bind mount Docker socket)"
             echo "  --rw-config       Enable read-write access to ~/.claude config (for OAuth refresh)"
+            echo "                    Automatically syncs updated tokens back to Keychain/file on exit"
+            echo "                    Creates timestamped backups for safety"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
