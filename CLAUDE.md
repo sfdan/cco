@@ -1,201 +1,174 @@
-# ccon - A Thin Protective Layer for Claude Code
+# ccon Development Guide for Claude
 
-A minimal, secure way to run Claude Code in a Docker container with proper authentication handling.
+## What This Project Is
 
-## Architecture
+**ccon** (Claude Container, or Claude Condom if you're so inclined) is a Docker-based containerization wrapper for Claude Code. It provides "a thin protective layer for Claude Code" - running Claude Code inside a secure container while maintaining full functionality.
 
-- **Base**: Node.js with modern shell tools (jq, fzf, ripgrep, git, etc.)
-- **Security**: Dropped capabilities, read-only credential mounts, network restrictions
-- **Auth**: Auto-detects macOS Keychain or Linux credential files
-- **Tools**: Comprehensive dev toolchain including PostgreSQL and SQLite clients
-- **Config Detection**: Supports CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, and ~/.claude fallback
+## Core Understanding You Need
 
-## Design Principles
+### The Problem Being Solved
+- Claude Code with `--dangerously-skip-permissions` is fast but risky (can access entire host)
+- Permission prompts kill development flow  
+- Users want autonomous Claude but with safety barriers
+- Container isolation solves this: Claude gets full autonomy within a sandbox
 
-1. **Security First**: Container runs with minimal privileges
-2. **Zero Config**: Works out of the box if Claude Code is authenticated
-3. **Cross Platform**: macOS and Linux support
-4. **Minimal**: Single script, single command to run
-
-## Components
-
-- `Dockerfile`: Based on Anthropic's devcontainer with enhanced tooling
-- `ccon`: Main script that handles build/run logic
-- Authentication auto-detection for both subscription and API key auth
-
-## Testing and Debugging
-
-**IMPORTANT**: Claude Code cannot run interactive bash sessions inside containers due to tool limitations.
-
-### Testing Container Environment
+### Architecture in 30 Seconds
 ```bash
-# Run one-off commands inside container
-./ccon --shell 'env | grep CLAUDE'
-
-# Test Claude Code non-interactively
-./ccon "what is 2+2?"
-
-# Debug configuration
-./ccon --shell "ls -la ~/.claude"
+Host System → Docker Container → Claude Code
+     ↓              ↓              ↓
+Project files → Mount read-write → Claude can edit
+Credentials → Extract & mount → Claude can authenticate  
+System → Isolated → Claude can't escape container
 ```
 
-### Development Sanity Check Suite
+## Critical Development Principles
 
-Before committing major changes, always run this test suite:
+### 1. NEVER Break Authentication
+- Credentials are NEVER baked into Docker images (security violation)
+- Fresh extraction from Keychain (macOS) or files (Linux) every run
+- System config mounted read-only, project config read-write
+- If auth breaks, everything breaks - this is priority #1
 
+### 2. NEVER Mix System and Project Config
 ```bash
-# 1. Basic functionality
-./ccon "what is 2+2?"
+# CORRECT separation:
+host:~/.claude → container:/home/user/.claude (read-only)
+host:$PROJECT/.claude → container:$PROJECT/.claude (read-write)
 
-# 2. Shell mode
-./ccon --shell whoami
-./ccon --shell 'echo "HOME: $HOME" && id && pwd'
-
-# 3. UV/Python environment
-./ccon --shell 'uv --version'
-./ccon --shell 'cd /tmp && uv init test-sanity && cd test-sanity && ls -la'
-
-# 4. Claude Code integration
-./ccon "create a simple Python project with uv"
-
-# 5. Rebuild capability
-./ccon --rebuild
+# WRONG - would corrupt user's global config:
+host:~/.claude → container:$PROJECT/.claude ❌
 ```
 
-**Success criteria**: No permission errors, no authentication prompts, no hanging, proper user identity and environment.
+### 3. User Expectations
+- Should feel exactly like using `claude` directly
+- All Claude Code options must pass through unchanged
+- Container should be invisible to user workflow
+- Failures should be obvious and recoverable
 
-### DO NOT attempt:
-- Interactive shells expecting responses
-- Commands that require stdin input
-- Multi-step interactive debugging sessions
+## Quick Diagnostic Commands
 
-## Claude Code Configuration Hierarchy
-
-**CRITICAL**: Claude Code uses a hierarchical configuration system that must be preserved to prevent data corruption.
-
-### System vs Project Configuration
-
-#### System Configuration (Global)
-- **Location**: Determined by priority order:
-  1. `$CLAUDE_CONFIG_DIR` environment variable
-  2. `$XDG_CONFIG_HOME/claude` or `~/.config/claude` (v1.0.30+)
-  3. `~/.claude` (legacy fallback)
-- **Contains**: 
-  - Credentials (`.credentials.json`)
-  - Global settings (`settings.json`)
-  - User commands, projects, todos
-  - OAuth account information
-- **Container Mount**: Read-only to `/home/user/.claude`
-- **Purpose**: User-wide authentication and preferences
-
-#### Project Configuration (Local)
-- **Location**: `$PROJECT_DIR/.claude/`
-- **Contains**:
-  - Project-specific settings (`settings.json`, `settings.local.json`)
-  - Local commands and tools
-  - Project-specific todos and state
-- **Container Mount**: Read-write to `$PROJECT_DIR/.claude`
-- **Purpose**: Project-specific overrides and settings
-
-### Security Architecture
-
-#### Credentials Protection
-- **Never baked into Docker images**: Credentials are verified but not copied during build
-- **Runtime mounting only**: Fresh credentials extracted from Keychain/files at container start
-- **Read-only mounts**: System config mounted read-only to prevent accidental modification
-- **Temporary extraction**: Keychain credentials written to temp files, cleaned up on exit
-
-#### Mount Strategy
+### When Something's Broken
 ```bash
-# System config (read-only)
-host:~/.claude → container:/home/user/.claude:ro
+# 1. Test basic functionality
+./ccon "what is 2+2?"  # Should return "4" without auth prompts
 
-# Project config (read-write) 
-host:$PROJECT/.claude → container:$PROJECT/.claude:rw
+# 2. Check authentication 
+./ccon --shell "ls -la ~/.claude/.credentials.json"  # Should exist with proper ownership
 
-# Fresh credentials (read-only)
-host:/tmp/ccon-creds-$$ → container:/home/user/.claude/.credentials.json:ro
+# 3. Check user mapping
+./ccon --shell "whoami && id"  # Should match host UID, not be "I have no name!"
+
+# 4. Check working directory
+./ccon --shell "pwd"  # Should be project directory, not /home/user
+
+# 5. Nuclear option
+./ccon --rebuild  # Rebuilds everything, pulls latest Claude Code
 ```
 
-### Environment Variables
+### Common Failure Patterns
+- **"I have no name!" prompt**: UID mapping broken, check entrypoint script
+- **Auth prompts inside container**: Credential mounting failed
+- **Permission denied on files**: File ownership mismatch between host/container
+- **Can't find project files**: Working directory not preserved
+- **Build failures**: Usually Dockerfile or build context issues
 
-#### Passed Through to Container
-- `CLAUDE_CONFIG_DIR`: Override system config location
-- `XDG_CONFIG_HOME`: XDG Base Directory specification
-- `ANTHROPIC_API_KEY`: API authentication (alternative to OAuth)
-- Standard environment: `NO_COLOR`, `TERM`, proxy settings, git config
+## Key Architecture Details
 
-#### Set by ccon
-- `CLAUDE_CONFIG_DIR=/home/user/.claude`: Forces container to use mounted system config
+### User Creation Strategy (docker-entrypoint.sh)
+The container starts as root, creates a user matching host UID/GID, then switches to that user:
+```bash
+if [ "$HOST_UID" = "1000" ]; then
+    # Use existing node user (Node.js base image conflict)
+    USER_NAME="node"
+elif ! id -u "$HOST_UID"; then
+    # Create new user for non-standard UIDs (like macOS 501)
+    useradd -u "$HOST_UID" -g "$HOST_GID" hostuser
+    USER_NAME="hostuser"
+fi
+```
 
-### Data Corruption Prevention
+### Configuration Mounting Rules
+```bash
+# NEVER mix these up - this prevents data corruption:
+host:~/.claude → .claude-system/ → container:/home/user/.claude (read-only)
+host:$PROJECT/.claude → container:$PROJECT/.claude (read-write)
+host:keychain → temp file → container:/home/user/.claude/.credentials.json
+```
 
-#### What ccon Does RIGHT
-- ✅ Copies system config to `.claude-system/` staging area (not `.claude/`)
-- ✅ Mounts system config read-only
-- ✅ Preserves project `.claude/` directories untouched
-- ✅ Never bakes credentials into Docker images
-- ✅ Maintains clear separation between system and project config
+Why this matters:
+- System config is user's global Claude settings (never touch)
+- Project config is local overrides (safe to modify)
+- Credentials are runtime-only (never persist)
 
-#### What Would Be DANGEROUS
-- ❌ Copying system config into project `.claude/` directory
-- ❌ Mounting project config to system location in container
-- ❌ Baking credentials into Docker images
-- ❌ Read-write mounting of system config
-- ❌ Mixing system and project configuration files
+## Development Workflow
 
-## Experimental Features
-
-### OAuth Token Refresh (`--allow-oauth-refresh`)
-
-**Status**: EXPERIMENTAL - Use with caution
-
-**Purpose**: Allows Claude Code to refresh expired OAuth tokens inside the container and automatically sync them back to the host system.
-
-#### Architecture
-- **Startup**: Extract credentials from Keychain/files → mount read-write in container
-- **Runtime**: Claude Code refreshes tokens → writes updated credentials to mounted file
-- **Exit**: Detect changes → create backup → sync back to host system with safety checks
-
-#### Safety Mechanisms
-- **Race condition protection**: Content comparison to detect concurrent modifications
-- **Automatic backups**: Timestamped backups before any credential updates
-- **Manual recovery**: Failed syncs preserve container credentials with recovery instructions
-- **Cross-platform**: macOS Keychain and Linux file support
-
-#### Security Considerations
-- Enables credential write access for Claude Code
-- More complex failure modes than read-only mounting
-- Requires explicit opt-in via `--allow-oauth-refresh` flag
-
-### Credential Management Commands
-
-**Status**: EXPERIMENTAL - Use with caution
-
-#### `ccon backup-creds`
-- Creates timestamped backup of current Claude Code credentials
-- Cross-platform: macOS Keychain or Linux credentials file
-- Backup files stored in `~/.ccon-backups/` with restrictive permissions (600)
-
-#### `ccon restore-creds [backup-file]`
-- Restores credentials from backup
-- Auto-selects most recent backup if no file specified
-- Creates pre-restore backup before any changes
-- Requires user confirmation for automatic selection
-
-## Development Guidelines
-
-### Pre-Commit Testing
-Always run the sanity check suite before committing major changes:
+### Pre-Commit Safety Ritual
+**ALWAYS run this before committing major changes:**
 ```bash
 ./ccon "what is 2+2?"                    # Basic functionality
-./ccon --shell whoami                    # Shell access
-./ccon --shell 'uv --version'            # Python environment
-./ccon "create a simple Python project"  # Claude Code integration
-./ccon --rebuild                         # Build system
+./ccon --shell whoami                    # User identity correct
+./ccon --shell 'uv --version'            # Python tools work
+./ccon "create a simple Python project"  # End-to-end Claude integration
+./ccon --rebuild                         # Build system healthy
 ```
+If ANY of these fail, DO NOT commit.
 
-### Branding Consistency
+### Development Safety Principles
+- **Safety first**: Never commit broken code, use atomic commits only
+- **Git discipline**: Use `master` branch, stage specific files only
+- **Test before commit**: Run the pre-commit safety ritual for any major changes
+
+### When Working on Features
+
+#### Experimental Features (Currently: OAuth refresh, credential management)
+- All marked clearly as EXPERIMENTAL in help text and docs
+- Default behavior never changes
+- Explicit opt-in required (`--allow-oauth-refresh`)
+- Safety mechanisms built-in (backups, race condition protection)
+
+#### Architecture Changes
+- Test with both UID 1000 (Linux) and UID 501 (macOS) scenarios
+- Verify authentication works across platforms
+- Check container can access project files
+- Ensure working directory preservation
+
+### Common Development Patterns
+
+#### When Authentication Breaks
+1. Check credential extraction from Keychain/files
+2. Verify mount paths in container
+3. Test with `./ccon --shell "ls -la ~/.claude/"`
+4. Nuclear option: `./ccon --rebuild`
+
+#### When Build Fails
+1. Check build context (should be repo directory)
+2. Verify Dockerfile exists and is accessible
+3. Check for file permission issues
+4. Try manual `docker build -t ccon:latest .`
+
+#### When Container Behavior Changes
+1. Test user mapping with `./ccon --shell "whoami && id"`
+2. Check working directory with `./ccon --shell "pwd"`
+3. Verify environment variables passed through correctly
+
+### Branding Guidelines
 - **Name**: `ccon - Claude Container (or Claude Condom if you're so inclined)`
 - **Tagline**: `A thin protective layer for Claude Code`
-- Maintain plausible deniability in all public-facing documentation
+- **Tone**: Professional-first with subtle humor
+
+## When Claude Gets Confused
+
+### "Where am I?" (New Session Context)
+Read this file (CLAUDE.md) for technical context and architecture understanding
+
+### "What's broken?"
+Run the diagnostic commands above, check recent commits for changes
+
+### "How do I test this?"
+Use the pre-commit safety ritual, check in container with `--shell`
+
+### "What's safe to change?"
+- ccon script logic: generally safe
+- Dockerfile: test carefully, affects all users
+- Experimental features: already risky, document well
+- Core auth/mounting: EXTREMELY DANGEROUS, test extensively
