@@ -127,8 +127,9 @@ verify_claude_authentication() {
 # Sync updated credentials back to host system
 sync_credentials_back() {
     local temp_creds_dir="$1"
-    local original_hash="$2"
+    local original_content="$2"
     local host_creds_file="$3"
+    local startup_system_content="$4"
     local temp_creds_file="$temp_creds_dir/.credentials.json"
     
     # Check if credentials file exists and was potentially updated
@@ -136,23 +137,36 @@ sync_credentials_back() {
         return 0  # No credentials file to sync
     fi
     
-    # Calculate current hash to detect changes
-    local current_hash
-    if command -v sha256sum &>/dev/null; then
-        current_hash=$(sha256sum "$temp_creds_file" | cut -d' ' -f1)
-    elif command -v shasum &>/dev/null; then
-        current_hash=$(shasum -a 256 "$temp_creds_file" | cut -d' ' -f1)
-    else
-        # Fallback to md5 if sha256 not available
-        current_hash=$(md5sum "$temp_creds_file" 2>/dev/null | cut -d' ' -f1 || md5 -q "$temp_creds_file" 2>/dev/null)
-    fi
+    # Check if credentials content changed
+    local current_content
+    current_content=$(cat "$temp_creds_file")
     
-    # If hash unchanged, no sync needed
-    if [[ "$current_hash" = "$original_hash" ]]; then
+    # If content unchanged, no sync needed
+    if [[ "$current_content" = "$original_content" ]]; then
         return 0
     fi
     
     log "Detected updated credentials, syncing back to host system..."
+    
+    # Safety check: Verify system credentials haven't changed during our session
+    local current_system_content=""
+    if command -v security &>/dev/null; then
+        # macOS: Check current Keychain content
+        current_system_content=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+    elif [[ -n "$host_creds_file" && -f "$host_creds_file" ]]; then
+        # Linux: Check current file content
+        current_system_content=$(cat "$host_creds_file")
+    fi
+    
+    # Abort if system credentials changed during our session
+    if [[ -n "$startup_system_content" && -n "$current_system_content" && "$startup_system_content" != "$current_system_content" ]]; then
+        warn "SAFETY ABORT: System credentials were modified during session by another process"
+        warn "This could be Claude CLI, another ccon instance, or manual changes"
+        warn "Skipping sync-back to prevent credential conflicts"
+        warn "Your container's updated credentials are preserved in: $temp_creds_file"
+        warn "To manually sync: ./ccon restore-creds '$temp_creds_file'"
+        return 1
+    fi
     
     # Create backup timestamp
     local backup_timestamp
@@ -603,12 +617,13 @@ run_container() {
     # Create temporary directory for credentials extraction
     local temp_creds_dir
     temp_creds_dir=$(mktemp -d)
-    local original_creds_hash=""
+    local original_creds_content=""
     local host_creds_file=""
+    local startup_system_creds_content=""
     
     # Setup cleanup and credentials sync-back on exit
-    if [[ "$oauth_refresh" = true ]]; then
-        trap 'sync_credentials_back "$temp_creds_dir" "$original_creds_hash" "$host_creds_file" && rm -rf "$temp_creds_dir"' EXIT
+    if [[ "$allow_oauth_refresh" = true ]]; then
+        trap 'sync_credentials_back "$temp_creds_dir" "$original_creds_content" "$host_creds_file" "$startup_system_creds_content" && rm -rf "$temp_creds_dir"' EXIT
     else
         trap 'rm -rf "$temp_creds_dir"' EXIT
     fi
@@ -625,20 +640,15 @@ run_container() {
             echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
             chmod 600 "$temp_creds_dir/.credentials.json"
             
-            # Store original hash for sync-back detection if --oauth-refresh enabled
-            if [[ "$oauth_refresh" = true ]]; then
-                if command -v sha256sum &>/dev/null; then
-                    original_creds_hash=$(sha256sum "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
-                elif command -v shasum &>/dev/null; then
-                    original_creds_hash=$(shasum -a 256 "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
-                else
-                    original_creds_hash=$(md5sum "$temp_creds_dir/.credentials.json" 2>/dev/null | cut -d' ' -f1 || md5 -q "$temp_creds_dir/.credentials.json" 2>/dev/null)
-                fi
+            # Store original content for sync-back detection if --allow-oauth-refresh enabled
+            if [[ "$allow_oauth_refresh" = true ]]; then
+                original_creds_content=$(cat "$temp_creds_dir/.credentials.json")
+                startup_system_creds_content="$keychain_creds"
                 host_creds_file=""  # macOS uses Keychain, not file
             fi
             
-            # Mount credentials with appropriate permissions based on --oauth-refresh
-            if [[ "$oauth_refresh" = true ]]; then
+            # Mount credentials with appropriate permissions based on --allow-oauth-refresh
+            if [[ "$allow_oauth_refresh" = true ]]; then
                 docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
                 log "Mounting fresh credentials from macOS Keychain (read-write for OAuth refresh)"
             else
@@ -651,20 +661,15 @@ run_container() {
         cp "$host_system_claude_dir/.credentials.json" "$temp_creds_dir/.credentials.json"
         chmod 600 "$temp_creds_dir/.credentials.json"
         
-        # Store original hash for sync-back detection if --oauth-refresh enabled
-        if [[ "$oauth_refresh" = true ]]; then
-            if command -v sha256sum &>/dev/null; then
-                original_creds_hash=$(sha256sum "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
-            elif command -v shasum &>/dev/null; then
-                original_creds_hash=$(shasum -a 256 "$temp_creds_dir/.credentials.json" | cut -d' ' -f1)
-            else
-                original_creds_hash=$(md5sum "$temp_creds_dir/.credentials.json" 2>/dev/null | cut -d' ' -f1 || md5 -q "$temp_creds_dir/.credentials.json" 2>/dev/null)
-            fi
+        # Store original content for sync-back detection if --allow-oauth-refresh enabled
+        if [[ "$allow_oauth_refresh" = true ]]; then
+            original_creds_content=$(cat "$temp_creds_dir/.credentials.json")
+            startup_system_creds_content=$(cat "$host_system_claude_dir/.credentials.json")
             host_creds_file="$host_system_claude_dir/.credentials.json"
         fi
         
-        # Mount credentials with appropriate permissions based on --oauth-refresh
-        if [[ "$oauth_refresh" = true ]]; then
+        # Mount credentials with appropriate permissions based on --allow-oauth-refresh
+        if [[ "$allow_oauth_refresh" = true ]]; then
             docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
             log "Mounting credentials file (read-write for OAuth refresh)"
         else
@@ -836,7 +841,7 @@ shell_mode=false
 custom_env_vars=()
 custom_packages=()
 docker_access=false
-oauth_refresh=false
+allow_oauth_refresh=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -899,8 +904,8 @@ while [[ $# -gt 0 ]]; do
             docker_access=true
             shift
             ;;
-        --oauth-refresh)
-            oauth_refresh=true
+        --allow-oauth-refresh)
+            allow_oauth_refresh=true
             shift
             ;;
         --help | -h)
@@ -928,17 +933,18 @@ while [[ $# -gt 0 ]]; do
             echo "  --env, -e KEY=VAL Set environment variable in container"
             echo "  --packages, -p    Install additional apt packages into container"
             echo "  --docker          Enable Docker access (bind mount Docker socket)"
-            echo "  --oauth-refresh   Enable OAuth token refresh with automatic sync-back"
-            echo "                    Allows Claude to refresh expired tokens and syncs them back"
+            echo "  --allow-oauth-refresh"
+            echo "                    Allow OAuth token refresh with automatic sync-back"
+            echo "                    Permits Claude to refresh expired tokens and syncs them back"
             echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
-            echo "                    Creates timestamped backups for safety"
+            echo "                    Creates timestamped backups and uses clondom protection"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
             echo "This means all Claude Code options (--resume, --model, etc.) work normally."
             echo ""
             echo "Safety Recommendation:"
-            echo "  Before using --oauth-refresh for the first time, run:"
+            echo "  Before using --allow-oauth-refresh for the first time, run:"
             echo "    ./ccon backup-creds"
             echo ""
             echo "Environment Variables:"
