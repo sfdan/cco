@@ -1,299 +1,217 @@
-# Claudito
+# ccon
+> *A thin protective layer for Claude*
 
-A minimal, secure way to run Claude Code in a Docker container with proper authentication handling.
+**ccon** (Claude Container, or Claude Condom - your choice) provides essential protection when Claude Code gets up close and personal with your system.
 
-## Why Claudito?
+## Why protection matters
 
-Claude Code's `--dangerously-skip-permissions` flag enables autonomous operation but **runs commands directly on your host system**. **Claudito gives you the speed of autonomous Claude with container protection.**
+Running Claude Code with `--dangerously-skip-permissions` feels great - fast, responsive, no interruptions. But going in raw has risks.
 
-### The Problem
-- Claude Code without `--dangerously-skip-permissions`: Constantly asks for permission, breaks flow
-- Claude Code with `--dangerously-skip-permissions`: Fast and autonomous but **vulnerable to prompt injection attacks**
+**ccon lets you have it both ways: all the pleasure of autonomous Claude, with a barrier between Claude and your sensitive areas.**
 
-### The Solution  
-Claudito runs Claude Code with `--dangerously-skip-permissions` **inside a secure container**, protecting you from:
+### The problem with exposure
+- **Unprotected Claude**: Lightning fast but vulnerable to nasty injections
+- **Safe mode**: Constant permission prompts kill the flow
 
-- **Prompt Injection Attacks**: Malicious websites can't `rm -rf /` your system
-- **Accidental Damage**: Mistakes are contained, not catastrophic  
-- **Autonomous Speed**: No permission prompts, Claude works at full speed
-- **Host Isolation**: Your real system stays safe
+### Protected interaction
+- **Smooth operation**: No stopping to ask permission
+- **Barrier protection**: Contains any unwanted side effects  
+- **Peace of mind**: Enjoy the experience without worry
+- **Easy cleanup**: Fresh environment every time
 
-**If you don't need `--dangerously-skip-permissions`, just use `claude` directly.**
+## Quick start
 
-## Quick Start
-
-### Install
-
+### Installation
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nikvdp/ccon/master/install.sh | bash
 ```
 
-### Use
-
+### Usage
 ```bash
-# First, make sure Claude Code is authenticated
-# Then run claudito in any project directory
-claudito
+# Make sure Claude is ready first
+ccon
 
-# Or pass arguments to Claude Code
-claudito --help
-claudito "write a hello world script"
+# Direct engagement
+ccon "write a hello world script"
+ccon "help me refactor this code"
 ```
+
+## Design philosophy
+
+**ccon gets out of your way.** It's designed to feel natural - like using Claude directly, just safer.
+
+- **Thin layer**: Barely noticeable protection
+- **Natural feel**: Works exactly like `claude` but protected
+- **No surprises**: Everything you expect, just contained
+- **Seamless experience**: Your environment, your files, your workflow
+
+You should barely notice ccon is there, except for that reassuring feeling of safety.
 
 ## Installation
 
-### One-liner Install
-
+### One-liner install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nikvdp/ccon/master/install.sh | bash
 ```
 
-The installer will:
-- Download claudito to `/usr/local/bin` or `~/.local/bin`
-- Verify Docker is installed and running
-- Check that all prerequisites are met
-
-### Manual Install
-
+### Manual setup
 ```bash
-# Download claudito script
-curl -fsSL https://raw.githubusercontent.com/nikvdp/claudito/master/claudito > /usr/local/bin/claudito
-chmod +x /usr/local/bin/claudito
+git clone https://github.com/nikvdp/ccon.git
+cd ccon
+chmod +x ccon
+sudo ln -s "$PWD/ccon" /usr/local/bin/ccon
 ```
 
 ## Usage
 
-### Basic Usage
-
+### Basic operation
 ```bash
-# Interactive Claude Code session (with --dangerously-skip-permissions enabled)
-claudito
+# Interactive session
+ccon
 
-# Pass arguments to Claude Code (autonomous operation, container isolated)
-claudito "analyze this codebase"
-claudito --resume
+# Direct commands  
+ccon "analyze this codebase"
+ccon --resume  # Claude Code option passed through
 
 # Get help
-claudito --help
+ccon --help
 ```
 
-**Note**: Claudito runs Claude Code with `--dangerously-skip-permissions` by default. This allows Claude to work autonomously without permission prompts while keeping your host system protected by container isolation.
+### Advanced options
+```bash
+# Rebuild the protective layer
+ccon --rebuild
 
-### Advanced Usage
+# System information and status
+ccon --info
+
+# Shell access for inspection
+ccon --shell
+ccon --shell 'ls -la'  # Run shell commands
+
+# Custom environment
+ccon --env API_KEY=sk-123
+
+# Additional tools
+ccon --packages terraform,kubectl
+
+# Enable Docker access
+ccon --docker
+
+# Update ccon installation
+ccon --self-update
+
+# Clean up containers
+ccon --cleanup
+```
+
+## Command Pass-through
+
+ccon acts as a wrapper - any options it doesn't recognize get passed directly to Claude Code:
 
 ```bash
-# Force rebuild the container image
-claudito --rebuild
+# These Claude Code options work normally
+ccon --resume
+ccon --model claude-3-5-sonnet-20241022 "write tests"
+ccon --no-clipboard "analyze this file"
 
-# Debug with interactive shell
-claudito --shell
-
-# Set environment variables
-claudito --env API_KEY=sk-123 --env DEBUG=1
-
-# Install additional packages
-claudito --packages terraform,ansible,helm
-
-# Enable Docker access for Docker-in-Docker workflows
-claudito --docker
-
-# Use .env file (automatic if present)
-echo "DEBUG=1" > .env
-claudito
+# Mix ccon and Claude options
+ccon --env DEBUG=1 --resume  # ccon + Claude options
 ```
-
-### Environment Variables
-
-Claudito automatically passes through common environment variables:
-
-**Authentication & Configuration:**
-- `ANTHROPIC_API_KEY` - API key fallback
-- `ANTHROPIC_BASE_URL` - Custom API base URL
-- `CLAUDE_CONFIG_DIR` - Claude configuration directory
-
-**Development:**
-- `NO_COLOR`, `TERM`, `COLORTERM` - Terminal settings
-- `LANG`, `LC_ALL`, `TZ` - Locale settings
-- `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` - Git configuration
-
-**Network:**
-- `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` - Proxy settings
-
-You can also:
-- Add custom variables: `claudito --env CUSTOM_VAR=value`
-- Use .env files: Create `.env` in your project directory
-- Pass host variables: `claudito --env CUSTOM_VAR` (inherits from host)
-
-### Custom Packages
-
-Add your favorite CLI tools to the container:
-
-```bash
-# Install specific packages
-claudito --packages terraform,kubectl,ansible
-
-# Multiple packages for infrastructure work
-claudito --packages "aws-cli,terraform,helm,jq"
-```
-
-**Note**: Custom packages trigger an automatic image rebuild and are installed via `apt-get`.
-
-### Docker Access
-
-Enable Docker-in-Docker for containerized development workflows:
-
-```bash
-# Enable Docker access inside claudito
-claudito --docker
-
-# Now Claude can run docker commands, build images, etc.
-claudito --docker "help me containerize this app"
-```
-
-**Note**: This bind mounts your host Docker socket, allowing Claude to manage containers on your host system. Use with appropriate caution.
-
-### Advanced: Custom Dockerfile
-
-For complex customizations, you can modify the Dockerfile directly:
-
-```dockerfile
-# Add after the existing RUN commands
-RUN curl -fsSL https://get.docker.com | sh  # Install Docker
-RUN npm install -g some-node-tool           # Node.js tools
-RUN pip3 install some-python-package        # Python packages
-```
-
-Then rebuild: `claudito --rebuild`
-
-## Requirements
-
-- **Docker**: Installed and running
-- **Claude Code**: Authenticated (`claude` command working)
-- **Bash**: For the claudito script
-
-### Authentication
-
-Claudito automatically detects and uses your Claude Code authentication:
-
-- **macOS**: Extracts credentials from Keychain
-- **Linux**: Uses `~/.claude/.credentials.json`
-- **Fallback**: `ANTHROPIC_API_KEY` environment variable
-
-## Architecture
-
-### Container Features
-
-- **Base**: Node.js 20 with comprehensive toolchain
-- **Tools**: jq, ripgrep, fzf, git, bat, PostgreSQL/SQLite clients, and more
-- **Languages**: Python, Go, Rust, Java support
-- **Security**: Minimal privileges, read-only credential mounts
-
-### Build Process
-
-1. **Credential Extraction**: Copies `~/.claude` directory and fresh credentials
-2. **Image Build**: Creates container with your UID/GID for seamless file access
-3. **Runtime**: Mounts current directory, preserves environment
-
-### Security Model
-
-- **Dropped Capabilities**: Runs with minimal Linux capabilities
-- **UID/GID Mapping**: Container user matches host user
-- **Read-only Mounts**: Credentials and config files mounted read-only
-- **Network Restrictions**: Only necessary network capabilities
-- **Isolated Environment**: Clean container state for each run
 
 ## Configuration
 
-### Project-level Configuration
+### Environment setup
+ccon passes through everything you need:
+- `ANTHROPIC_API_KEY` - Direct access
+- Terminal settings (`TERM`, `NO_COLOR`)
+- Git configuration
+- Locale and timezone
 
-Create `.claudito.env` or `.env` in your project:
-
+### Project-level config
 ```bash
-# Custom environment for this project
-DEBUG=1
-CUSTOM_API_URL=https://api.example.com
+# Use .env files
+echo "DEBUG=1" > .env
+ccon
 ```
 
-### Global Configuration
+## Requirements
 
-Claudito inherits all Claude Code configuration from `~/.claude/`:
-- Slash commands
-- Project settings  
-- Authentication tokens
-- User preferences
+- **Docker**: Must be running
+- **Claude Code**: Must be authenticated
+- **Bash**: For the wrapper
+
+### Authentication
+ccon automatically finds your Claude credentials:
+- **macOS**: Extracts from Keychain
+- **Linux**: Uses `~/.claude/.credentials.json` or config directory
+- **Environment**: `ANTHROPIC_API_KEY` passed through to container
+
+## Architecture
+
+### Container specs
+- Node.js 20 with development tools
+- Modern CLI utilities (jq, ripgrep, fzf)
+- Multiple language support
+- Database clients and network tools
+
+### Safety features
+- Isolated environment
+- Secure credential mounting
+- Proper permission mapping
+- Fresh session every time
 
 ## Examples
 
-### Development Workflow
-
+### Development workflow
 ```bash
-# Start working on a project (full Claude Code power, safely contained)
 cd my-project
-claudito
-
-# Run specific Claude Code commands (autonomous operation, no permission prompts)
-claudito "add tests for the auth module"
-claudito --resume  # Continue previous conversation
-
-# Debug container environment
-claudito --shell
+ccon
+ccon "add tests to the auth module"
+ccon --resume
 ```
 
-### CI/CD Usage
-
+### CI/CD usage
 ```bash
-# In CI, use API key authentication
-export ANTHROPIC_API_KEY=sk-your-key
-claudito "review this pull request"
-```
-
-### With Custom Environment
-
-```bash
-# Set custom variables
-claudito --env ENVIRONMENT=staging --env DEBUG=1 "deploy to staging"
-
-# Or use .env file
-echo "ENVIRONMENT=staging" > .env
-echo "DEBUG=1" >> .env
-claudito "check deployment status"
+export ANTHROPIC_API_KEY=sk-key
+ccon "review this pull request"
 ```
 
 ## Troubleshooting
 
-### Common Issues
-
-**"No Claude Code credentials found"**
+**Authentication issues**
 - Run `claude` first to authenticate
-- Make sure Claude Code is working outside the container
+- Check Claude works outside ccon
 
-**"Docker daemon is not running"**
-- Start Docker Desktop or Docker daemon
+**Docker problems**
+- Start Docker daemon
 - Verify with `docker info`
 
 **Permission errors**
-- Claudito automatically handles UID/GID mapping
-- Try `claudito --rebuild` if issues persist
+- ccon handles user mapping automatically
+- Try `ccon --rebuild` if needed
 
-**Authentication not working**
-- Claudito copies credentials at build time
-- Run `claudito --rebuild` after re-authenticating Claude Code
-
-### Debug Mode
-
+### Debug access
 ```bash
-# Get an interactive shell in the container
-claudito --shell
-
-# Check what's mounted
-claudito --shell
-# Then in container: ls -la ~/.claude
+ccon --shell  # Get inside for inspection
 ```
+
+## Security
+
+ccon provides a significant layer of protection, but like any barrier method, it's not 100% foolproof. It's certainly better than nothing, but:
+
+- Keep your protection updated
+- Check it's working properly before each session
+- Remember that no method is perfect
+
+**For detailed security information, threat model, and limitations, see [SECURITY.md](SECURITY.md).**
+
+**Practice safe computing.**
 
 ## Contributing
 
-Pull requests welcome! Please see [SECURITY.md](SECURITY.md) for security considerations.
+Pull requests welcome! Please maintain all safety mechanisms.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License
