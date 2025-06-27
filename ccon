@@ -707,6 +707,128 @@ run_container() {
     fi
 }
 
+# Backup Claude Code credentials to a safe location
+backup_credentials() {
+    local backup_dir="$HOME/.ccon-backups"
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    local backup_file="$backup_dir/claude-credentials.$timestamp.json"
+    
+    # Create backup directory if it doesn't exist
+    mkdir -p "$backup_dir"
+    
+    log "Backing up Claude Code credentials..."
+    
+    if command -v security &>/dev/null; then
+        # macOS: Extract from Keychain
+        local keychain_creds
+        keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+        if [[ -n "$keychain_creds" ]]; then
+            echo "$keychain_creds" >"$backup_file"
+            chmod 600 "$backup_file"
+            log "Successfully backed up Keychain credentials to: $backup_file"
+            echo "To restore: ./ccon restore-creds \"$backup_file\""
+        else
+            error "No Claude Code credentials found in macOS Keychain"
+            exit 1
+        fi
+    else
+        # Linux: Copy from credentials file
+        local claude_config_dir
+        claude_config_dir=$(find_claude_config_dir)
+        local creds_file="$claude_config_dir/.credentials.json"
+        
+        if [[ -f "$creds_file" ]]; then
+            cp "$creds_file" "$backup_file"
+            chmod 600 "$backup_file"
+            log "Successfully backed up credentials file to: $backup_file"
+            echo "To restore: ./ccon restore-creds \"$backup_file\""
+        else
+            error "No Claude Code credentials file found at: $creds_file"
+            exit 1
+        fi
+    fi
+}
+
+# Restore Claude Code credentials from a backup
+restore_credentials() {
+    local backup_file="$1"
+    
+    if [[ -z "$backup_file" ]]; then
+        error "Usage: ./ccon restore-creds <backup-file>"
+        exit 1
+    fi
+    
+    if [[ ! -f "$backup_file" ]]; then
+        error "Backup file not found: $backup_file"
+        exit 1
+    fi
+    
+    log "Restoring Claude Code credentials from: $backup_file"
+    
+    # Create a backup of current credentials before restoring
+    local current_backup_timestamp
+    current_backup_timestamp=$(date +"%Y%m%d_%H%M%S")
+    
+    if command -v security &>/dev/null; then
+        # macOS: Backup current and restore to Keychain
+        log "Creating backup of current Keychain credentials..."
+        local current_creds
+        current_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+        if [[ -n "$current_creds" ]]; then
+            local current_backup_dir="$HOME/.ccon-backups"
+            mkdir -p "$current_backup_dir"
+            echo "$current_creds" >"$current_backup_dir/claude-credentials.pre-restore.$current_backup_timestamp.json"
+            log "Current credentials backed up to: $current_backup_dir/claude-credentials.pre-restore.$current_backup_timestamp.json"
+        fi
+        
+        # Restore from backup file
+        local restore_creds
+        restore_creds=$(cat "$backup_file")
+        if security add-generic-password -U -s "Claude Code-credentials" -a "$USER" -w "$restore_creds" >/dev/null 2>&1; then
+            log "Successfully restored credentials to macOS Keychain"
+        else
+            error "Failed to restore credentials to macOS Keychain"
+            exit 1
+        fi
+    else
+        # Linux: Backup current and restore to file
+        local claude_config_dir
+        claude_config_dir=$(find_claude_config_dir)
+        local creds_file="$claude_config_dir/.credentials.json"
+        
+        # Backup current credentials if they exist
+        if [[ -f "$creds_file" ]]; then
+            local current_backup_file="${creds_file}.pre-restore.$current_backup_timestamp"
+            cp "$creds_file" "$current_backup_file"
+            log "Current credentials backed up to: $current_backup_file"
+        fi
+        
+        # Restore from backup
+        if cp "$backup_file" "$creds_file"; then
+            chmod 600 "$creds_file"
+            log "Successfully restored credentials to: $creds_file"
+        else
+            error "Failed to restore credentials to: $creds_file"
+            exit 1
+        fi
+    fi
+}
+
+# Handle subcommands first
+if [[ $# -gt 0 ]]; then
+    case $1 in
+        backup-creds)
+            backup_credentials
+            exit 0
+            ;;
+        restore-creds)
+            restore_credentials "$2"
+            exit 0
+            ;;
+    esac
+fi
+
 # Handle command line arguments
 rebuild_image=false
 claude_args=()
@@ -789,6 +911,12 @@ while [[ $# -gt 0 ]]; do
             echo "better than nothing, but you can still get infections if you're not careful."
             echo ""
             echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
+            echo "       $0 backup-creds"
+            echo "       $0 restore-creds <backup-file>"
+            echo ""
+            echo "Credential Management:"
+            echo "  backup-creds      Create a backup of current Claude Code credentials"
+            echo "  restore-creds     Restore credentials from a backup file"
             echo ""
             echo "Options:"
             echo "  --rebuild         Force rebuild of Docker image"
@@ -808,6 +936,10 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
             echo "This means all Claude Code options (--resume, --model, etc.) work normally."
+            echo ""
+            echo "Safety Recommendation:"
+            echo "  Before using --oauth-refresh for the first time, run:"
+            echo "    ./ccon backup-creds"
             echo ""
             echo "Environment Variables:"
             echo "  - Automatically loads .env file if present"
