@@ -125,12 +125,12 @@ host:/tmp/ccon-creds-$$ → container:/home/user/.claude/.credentials.json:ro
 - `ANTHROPIC_API_KEY`: API authentication (alternative to OAuth)
 - Standard environment: `NO_COLOR`, `TERM`, proxy settings, git config
 
-#### Set by Claudito
+#### Set by ccon
 - `CLAUDE_CONFIG_DIR=/home/user/.claude`: Forces container to use mounted system config
 
 ### Data Corruption Prevention
 
-#### What Claudito Does RIGHT
+#### What ccon Does RIGHT
 - ✅ Copies system config to `.claude-system/` staging area (not `.claude/`)
 - ✅ Mounts system config read-only
 - ✅ Preserves project `.claude/` directories untouched
@@ -143,3 +143,59 @@ host:/tmp/ccon-creds-$$ → container:/home/user/.claude/.credentials.json:ro
 - ❌ Baking credentials into Docker images
 - ❌ Read-write mounting of system config
 - ❌ Mixing system and project configuration files
+
+## Experimental Features
+
+### OAuth Token Refresh (`--allow-oauth-refresh`)
+
+**Status**: EXPERIMENTAL - Use with caution
+
+**Purpose**: Allows Claude Code to refresh expired OAuth tokens inside the container and automatically sync them back to the host system.
+
+#### Architecture
+- **Startup**: Extract credentials from Keychain/files → mount read-write in container
+- **Runtime**: Claude Code refreshes tokens → writes updated credentials to mounted file
+- **Exit**: Detect changes → create backup → sync back to host system with safety checks
+
+#### Safety Mechanisms
+- **Race condition protection**: Content comparison to detect concurrent modifications
+- **Automatic backups**: Timestamped backups before any credential updates
+- **Manual recovery**: Failed syncs preserve container credentials with recovery instructions
+- **Cross-platform**: macOS Keychain and Linux file support
+
+#### Security Considerations
+- Enables credential write access for Claude Code
+- More complex failure modes than read-only mounting
+- Requires explicit opt-in via `--allow-oauth-refresh` flag
+
+### Credential Management Commands
+
+**Status**: EXPERIMENTAL - Use with caution
+
+#### `ccon backup-creds`
+- Creates timestamped backup of current Claude Code credentials
+- Cross-platform: macOS Keychain or Linux credentials file
+- Backup files stored in `~/.ccon-backups/` with restrictive permissions (600)
+
+#### `ccon restore-creds [backup-file]`
+- Restores credentials from backup
+- Auto-selects most recent backup if no file specified
+- Creates pre-restore backup before any changes
+- Requires user confirmation for automatic selection
+
+## Development Guidelines
+
+### Pre-Commit Testing
+Always run the sanity check suite before committing major changes:
+```bash
+./ccon "what is 2+2?"                    # Basic functionality
+./ccon --shell whoami                    # Shell access
+./ccon --shell 'uv --version'            # Python environment
+./ccon "create a simple Python project"  # Claude Code integration
+./ccon --rebuild                         # Build system
+```
+
+### Branding Consistency
+- **Name**: `ccon - Claude Container (or Claude Condom if you're so inclined)`
+- **Tagline**: `A thin protective layer for Claude Code`
+- Maintain plausible deniability in all public-facing documentation
