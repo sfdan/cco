@@ -526,8 +526,8 @@ run_container() {
     log "Mounting Claude config directory: $host_system_claude_dir → $container_home/.claude"
     docker_args+=(-v "$host_system_claude_dir":"$container_home/.claude")
 
-    # Extract fresh credentials from keychain for macOS
-    if command -v security &>/dev/null; then
+    # Extract fresh credentials from keychain for macOS (unless --rw-config specified)
+    if command -v security &>/dev/null && [[ "$rw_config" != true ]]; then
         local keychain_creds
         keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
         if [[ -n "$keychain_creds" ]]; then
@@ -535,8 +535,10 @@ run_container() {
             chmod 600 "$temp_creds_dir/.credentials.json"
             # Mount the fresh credentials over the system directory's credentials
             docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
-            log "Mounting fresh credentials from macOS Keychain"
+            log "Mounting fresh credentials from macOS Keychain (read-only)"
         fi
+    elif [[ "$rw_config" = true ]]; then
+        log "Using --rw-config: system config directory fully writable for OAuth token refresh"
     fi
 
     # Mount main .claude.json from home directory (this is separate from .claude/)
@@ -580,6 +582,7 @@ shell_mode=false
 custom_env_vars=()
 custom_packages=()
 docker_access=false
+rw_config=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -642,6 +645,10 @@ while [[ $# -gt 0 ]]; do
             docker_access=true
             shift
             ;;
+        --rw-config)
+            rw_config=true
+            shift
+            ;;
         --help | -h)
             echo "ccon - Claude Container (or Claude Condom, whichever you prefer)"
             echo ""
@@ -661,6 +668,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --env, -e KEY=VAL Set environment variable in container"
             echo "  --packages, -p    Install additional apt packages into container"
             echo "  --docker          Enable Docker access (bind mount Docker socket)"
+            echo "  --rw-config       Enable read-write access to ~/.claude config (for OAuth refresh)"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "All other arguments are passed to Claude Code inside the container."
