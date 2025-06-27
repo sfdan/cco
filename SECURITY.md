@@ -52,7 +52,7 @@ ccon addresses these vulnerabilities through strict containerization:
 - **Runtime extraction**: Fresh credentials extracted from keychain/filesystem for each session
 - **Selective read-only mounting**: Fresh keychain credentials mounted read-only; system config mounted for state updates
 - **No credential persistence**: No credentials stored in Docker images
-- **No credential modification**: Claude cannot alter authentication data
+- **Default credential isolation**: Claude cannot alter authentication data (unless experimental OAuth refresh is enabled)
 
 ## Threat Model
 
@@ -139,6 +139,42 @@ ccon implements several container hardening measures:
 - Other users' home directories
 - Host root filesystem outside mounted directories
 - System binaries and libraries outside container
+
+## Experimental Features Security Considerations
+
+⚠️ **The following features are experimental and may introduce additional security risks:**
+
+### OAuth Token Refresh (`--allow-oauth-refresh`)
+**Purpose**: Allows Claude to refresh expired OAuth tokens and sync them back to the host system.
+
+**Security Implications**:
+- **Credential write access**: Claude gains ability to modify authentication credentials
+- **Race condition risk**: Multiple ccon instances could corrupt credentials (mitigated by "clondom" protection)
+- **Sync-back attacks**: Malicious content could potentially manipulate token refresh to corrupt host credentials
+- **Increased attack surface**: More complex credential handling creates more failure modes
+
+**Mitigation**: 
+- Creates automatic timestamped backups before any credential updates
+- Uses content comparison to detect concurrent modifications
+- Preserves container credentials for manual recovery if sync-back fails
+- Only enables when explicitly requested via `--allow-oauth-refresh`
+
+### Credential Management (`backup-creds`, `restore-creds`)
+**Purpose**: Manual backup and restoration of Claude Code credentials.
+
+**Security Implications**:
+- **Credential exposure**: Backup files contain sensitive authentication data
+- **File system security**: Backup security depends on host filesystem permissions
+- **Restore accidents**: Incorrect restoration could corrupt authentication
+
+**Mitigation**:
+- Backup files created with restrictive permissions (600)
+- Pre-restore backups created automatically before restoration
+- User confirmation required for automatic restoration from most recent backup
+- Cross-platform support (macOS Keychain + Linux files) with appropriate security handling
+
+### Recommendation
+These experimental features are disabled by default. Only enable them if you understand the additional security implications and have implemented appropriate safeguards (regular backups, monitoring, etc.).
 
 ## Risk Assessment
 
