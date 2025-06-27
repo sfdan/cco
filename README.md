@@ -31,10 +31,6 @@ curl -fsSL https://raw.githubusercontent.com/nikvdp/ccon/master/install.sh | bas
 
 ### Usage
 ```bash
-# Make sure Claude is ready first
-ccon
-
-# Direct engagement
 ccon "write a hello world script"
 ccon "help me refactor this code"
 ```
@@ -49,6 +45,18 @@ ccon "help me refactor this code"
 - **Seamless experience**: Your environment, your files, your workflow
 
 You should barely notice `ccon` is there, except for that reassuring feeling of safety.
+
+## How it works
+
+**ccon runs Claude Code inside a Docker container.** This creates a sandboxed environment where Claude can operate with full autonomy while being isolated from your host system.
+
+- **Docker sandbox**: Claude runs in an isolated container with its own filesystem
+- **Host file access**: Your project files are mounted so Claude can read and edit them
+- **Network isolation**: Claude's web access is contained within the container
+- **Credential management**: Authentication is handled securely without exposing host credentials
+- **Full toolchain**: Container includes development tools, languages, and utilities Claude needs
+
+The result? Claude gets the `--dangerously-skip-permissions` experience it needs to be productive, while potential risks are contained within the sandbox.
 
 ## Installation
 
