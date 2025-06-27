@@ -1,4 +1,4 @@
-# ccon - A Thin Protective Layer for Claude
+# ccon - A Thin Protective Layer for Claude Code
 
 A minimal, secure way to run Claude Code in a Docker container with proper authentication handling.
 

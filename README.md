@@ -1,5 +1,6 @@
 # ccon
-> *A thin protective layer for Claude*
+
+> *A thin protective layer for Claude Code*
 
 **ccon** (Claude Container, or Claude Condom - your choice) provides essential protection when Claude Code gets up close and personal with your system.
 

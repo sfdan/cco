@@ -215,7 +215,7 @@ show_usage() {
 
 # Main installation function
 main() {
-	log "🚀 Installing ccon - a thin protective layer for Claude"
+	log "🚀 Installing ccon - a thin protective layer for Claude Code"
 	echo
 
 	check_prerequisites
@@ -229,7 +229,7 @@ main() {
 # Handle command line arguments
 case "${1:-}" in
 --help | -h)
-	echo "ccon installer - a thin protective layer for Claude"
+	echo "ccon installer - a thin protective layer for Claude Code"
 	echo ""
 	echo "Usage: curl -fsSL https://raw.githubusercontent.com/nikvdp/ccon/master/install.sh | bash"
 	echo ""
