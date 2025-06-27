@@ -758,10 +758,34 @@ backup_credentials() {
 # Restore Claude Code credentials from a backup
 restore_credentials() {
 	local backup_file="$1"
+	local backup_dir="$HOME/.ccon-backups"
 
 	if [[ -z "$backup_file" ]]; then
-		error "Usage: ./ccon restore-creds <backup-file>"
-		exit 1
+		# Auto-select most recent backup
+		if [[ ! -d "$backup_dir" ]]; then
+			error "No backup directory found at: $backup_dir"
+			echo "Run './ccon backup-creds' first to create a backup"
+			exit 1
+		fi
+
+		# Find the most recent backup file
+		backup_file=$(find "$backup_dir" -name "claude-credentials.*.json" -not -name "*.pre-restore.*" -type f -print0 2>/dev/null | xargs -0 ls -t | head -1)
+		
+		if [[ -z "$backup_file" ]]; then
+			error "No backup files found in: $backup_dir"
+			echo "Run './ccon backup-creds' first to create a backup"
+			exit 1
+		fi
+
+		# Confirm with user
+		echo "Most recent backup found: $(basename "$backup_file")"
+		echo "Created: $(date -r "$backup_file" 2>/dev/null || stat -c %y "$backup_file" 2>/dev/null || echo "unknown")"
+		echo
+		read -p "Restore this backup? [y/N]: " -r
+		if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+			echo "Restore cancelled"
+			exit 0
+		fi
 	fi
 
 	if [[ ! -f "$backup_file" ]]; then
@@ -917,11 +941,12 @@ while [[ $# -gt 0 ]]; do
 		echo ""
 		echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
 		echo "       $0 backup-creds"
-		echo "       $0 restore-creds <backup-file>"
+		echo "       $0 restore-creds [backup-file]"
 		echo ""
-		echo "Credential Management:"
+		echo "Credential Management (EXPERIMENTAL):"
 		echo "  backup-creds      Create a backup of current Claude Code credentials"
-		echo "  restore-creds     Restore credentials from a backup file"
+		echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
+		echo "                    or specify backup file path to restore specific backup"
 		echo ""
 		echo "Options:"
 		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
@@ -933,7 +958,7 @@ while [[ $# -gt 0 ]]; do
 		echo "  --env, -e KEY=VAL Set environment variable in container"
 		echo "  --packages, -p    Install additional apt packages into container"
 		echo "  --docker          Enable Docker access (bind mount Docker socket)"
-		echo "  --allow-oauth-refresh"
+		echo "  --allow-oauth-refresh (EXPERIMENTAL)"
 		echo "                    Allow OAuth token refresh with automatic sync-back"
 		echo "                    Permits Claude to refresh expired tokens and syncs them back"
 		echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
