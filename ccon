@@ -2,7 +2,7 @@
 
 set -e
 
-# ccon - Claude Container (or Claude Condom, whichever you prefer)
+# ccon - Claude Container (or Claude Condom if you're so inclined)
 # A secure, minimal way to run Claude Code in a Docker container
 
 # Determine if we're running from installation or development
@@ -933,11 +933,8 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--help | -h)
-		echo "ccon - Claude Container (or Claude Condom, whichever you prefer)"
-		echo ""
-		echo "Like a real condom, ccon provides protection for your sensitive data"
-		echo "while allowing intimate interaction with Claude Code. It's certainly"
-		echo "better than nothing, but you can still get infections if you're not careful."
+		echo "ccon - Claude Container (or Claude Condom if you're so inclined)"
+		echo "A thin protective layer for Claude Code"
 		echo ""
 		echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
 		echo "       $0 backup-creds"

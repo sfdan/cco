@@ -90,7 +90,7 @@ ccon --help
 
 ### Advanced options
 ```bash
-# Rebuild the protective layer
+# Rebuild the protective layer (also updates to latest Claude Code version)
 ccon --rebuild
 
 # System information and status
@@ -103,7 +103,7 @@ ccon --shell 'ls -la'  # Run shell commands
 # Custom environment
 ccon --env API_KEY=sk-123
 
-# Additional tools
+# Additional apt packages
 ccon --packages terraform,kubectl
 
 # Enable Docker access
@@ -115,6 +115,25 @@ ccon --self-update
 # Clean up containers
 ccon --cleanup
 ```
+
+### Experimental features
+⚠️ **These features are experimental and may have edge cases. Use with caution.**
+
+```bash
+# OAuth token refresh (EXPERIMENTAL)
+# Allows Claude to refresh expired tokens and sync back to host system
+ccon --allow-oauth-refresh "help me code"
+
+# Credential management (EXPERIMENTAL)  
+# Backup and restore Claude Code credentials for safety
+ccon backup-creds                    # Backup current credentials
+ccon restore-creds                   # Restore from most recent backup
+ccon restore-creds backup-file.json  # Restore from specific backup
+```
+
+**OAuth refresh feature**: Enables bidirectional credential sync when Claude refreshes expired tokens. Uses race condition protection and creates automatic backups.
+
+**Credential management**: Provides manual backup/restore of Claude Code credentials with cross-platform support (macOS Keychain + Linux files).
 
 ## Command Pass-through
 
@@ -211,7 +230,7 @@ ccon --shell  # Get inside for inspection
 
 ccon provides a significant layer of protection, but like any barrier method, it's not 100% foolproof. It's certainly better than nothing, but:
 
-- Keep your protection updated
+- Keep your protection up to date
 - Check it's working properly before each session
 - Remember that no method is perfect
 
