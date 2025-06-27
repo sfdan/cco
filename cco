@@ -845,47 +845,21 @@ restore_credentials() {
 }
 
 # Handle subcommands first
-if [[ $# -gt 0 ]]; then
+subcommand_handled=false
+if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 	case $1 in
-	backup-creds)
-		backup_credentials
-		exit 0
-		;;
-	restore-creds)
-		restore_credentials "$2"
-		exit 0
-		;;
-	esac
-fi
-
-# Handle command line arguments
-rebuild_image=false
-claude_args=()
-shell_mode=false
-custom_env_vars=()
-custom_packages=()
-docker_access=false
-allow_oauth_refresh=false
-
-while [[ $# -gt 0 ]]; do
-	case $1 in
-	--rebuild)
-		rebuild_image=true
-		shift
-		;;
-	--self-update)
+	self-update)
 		update_cco
 		exit 0
 		;;
-	--version | -v)
-		show_version
-		exit 0
+	shell)
+		shell_mode=true
+		shift
+		# All remaining arguments are shell command arguments
+		claude_args=("$@")
+		subcommand_handled=true
 		;;
-	--info)
-		show_info
-		exit 0
-		;;
-	--cleanup)
+	cleanup)
 		log "Cleaning up cco containers..."
 		containers=$(docker ps -a --format "{{.Names}}" | grep "^cco-" || true)
 		if [[ -n "$containers" ]]; then
@@ -896,14 +870,45 @@ while [[ $# -gt 0 ]]; do
 		fi
 		exit 0
 		;;
-	--shell)
-		shell_mode=true
+	backup-creds)
+		backup_credentials
+		exit 0
+		;;
+	restore-creds)
+		restore_credentials "$2"
+		exit 0
+		;;
+	*)
+		# Not a subcommand, continue with flag processing
+		;;
+	esac
+fi
+
+# Handle command line arguments
+rebuild_image=false
+if [[ "$subcommand_handled" = false ]]; then
+	claude_args=()
+	shell_mode=false
+fi
+custom_env_vars=()
+custom_packages=()
+docker_access=false
+allow_oauth_refresh=false
+
+if [[ "$subcommand_handled" = false ]]; then
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--rebuild)
+		rebuild_image=true
 		shift
-		# Collect remaining arguments as shell command
-		while [[ $# -gt 0 ]]; do
-			claude_args+=("$1")
-			shift
-		done
+		;;
+	--version | -v)
+		show_version
+		exit 0
+		;;
+	--info)
+		show_info
+		exit 0
 		;;
 	--env | -e)
 		if [[ $# -lt 2 ]]; then
@@ -936,15 +941,17 @@ while [[ $# -gt 0 ]]; do
 		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
 		echo "A thin protective layer for Claude Code"
 		echo ""
-		echo "Usage: $0 [OPTIONS] [CLAUDE_ARGS...]"
+		echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
+		echo ""
+		echo "Commands:"
+		echo "  self-update       Update cco to latest version"
+		echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
+		echo "  cleanup           Remove all cco containers"
 		echo ""
 		echo "Options:"
 		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
-		echo "  --self-update     Update cco to latest version"
 		echo "  --version, -v     Show version information"
 		echo "  --info            Show system information and readiness status"
-		echo "  --cleanup         Remove all cco containers"
-		echo "  --shell [cmd...]  Start interactive shell or run shell command"
 		echo "  --env, -e KEY=VAL Set environment variable in container"
 		echo "  --packages, -p    Install additional apt packages into container"
 		echo "  --docker          Enable Docker access (bind mount Docker socket)"
@@ -965,7 +972,7 @@ while [[ $# -gt 0 ]]; do
 		echo ""
 		echo "Safety Recommendation:"
 		echo "  Before using --allow-oauth-refresh for the first time, run:"
-		echo "    ./cco backup-creds"
+		echo "    cco backup-creds"
 		echo ""
 		echo "Environment Variables:"
 		echo "  - Automatically loads .env file if present"
@@ -984,6 +991,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	esac
 done
+fi
 
 # Main execution flow
 main() {
