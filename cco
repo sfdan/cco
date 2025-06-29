@@ -300,7 +300,19 @@ build_image() {
 		build_args+=(--build-arg CUSTOM_PACKAGES="$packages_list")
 	fi
 
-	docker build -t "$IMAGE_NAME" "${build_args[@]}" .
+	# Check for custom Dockerfile in XDG config directory
+	local custom_dockerfile="${XDG_CONFIG_HOME:-$HOME/.config}/cco/Dockerfile"
+	local dockerfile_arg=""
+	
+	if [[ -f "$custom_dockerfile" ]]; then
+		log "Using custom Dockerfile: $custom_dockerfile"
+		dockerfile_arg="-f $custom_dockerfile"
+	else
+		log "Using default Dockerfile"
+		dockerfile_arg="-f Dockerfile"
+	fi
+	
+	docker build -t "$IMAGE_NAME" "${build_args[@]}" $dockerfile_arg .
 	cd "$original_dir"
 	log "Image built successfully"
 }
@@ -598,6 +610,52 @@ run_container() {
 			warn "Tried: /var/run/docker.sock, $HOME/.docker/run/docker.sock"
 		fi
 	fi
+
+	# Configure container networking for MCP server access
+	setup_container_networking() {
+		local use_host_networking=false
+		local networking_method=""
+		
+		# Check if OrbStack is available and running
+		if command -v orbstack &>/dev/null && orbstack status &>/dev/null 2>&1; then
+			use_host_networking=true
+			networking_method="OrbStack (native host networking)"
+		# Check if Docker Desktop 4.34+ with host networking capability
+		elif docker version 2>/dev/null | grep -q "Docker Desktop"; then
+			local docker_version
+			docker_version=$(docker version --format '{{.Client.Version}}' 2>/dev/null)
+			if [[ -n "$docker_version" ]]; then
+				# Extract major.minor version (e.g., "4.34" from "4.34.2") 
+				local version_parts
+				IFS='.' read -ra version_parts <<< "$docker_version"
+				local major="${version_parts[0]}"
+				local minor="${version_parts[1]}"
+				
+				if [[ "$major" -gt 4 ]] || [[ "$major" -eq 4 && "$minor" -ge 34 ]]; then
+					use_host_networking=true
+					networking_method="Docker Desktop 4.34+ (host networking available)"
+				fi
+			fi
+		fi
+		
+		if [[ "$use_host_networking" = true ]]; then
+			docker_args+=(--network=host)
+			log "Using host networking for MCP server access ($networking_method)"
+		else
+			docker_args+=(--add-host=host.docker.internal:host-gateway)
+			networking_method="host.docker.internal bridge"
+			log "Using bridge networking ($networking_method)"
+			
+			# Warn about MCP server connectivity limitations
+			if [[ -d "$HOME/.claude" && $(find "$HOME/.claude" -name "*.json" -exec grep -l "localhost\|127\.0\.0\.1" {} \; 2>/dev/null | wc -l) -gt 0 ]]; then
+				warn "Detected Claude configs referencing localhost - MCP servers may not be accessible"
+				warn "Consider upgrading to Docker Desktop 4.34+ or using OrbStack for full MCP server support"
+				warn "Alternative: Reconfigure MCP servers to use host.docker.internal instead of localhost"
+			fi
+		fi
+	}
+	
+	setup_container_networking
 
 	# Set up Claude Code configuration in container
 	local host_system_claude_dir
