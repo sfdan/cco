@@ -616,26 +616,12 @@ run_container() {
 		local use_host_networking=false
 		local networking_method=""
 		
-		# Check if OrbStack is available and running
-		if command -v orbstack &>/dev/null && orbstack status &>/dev/null 2>&1; then
+		# Check if Docker daemon supports host networking by looking for host network driver
+		if docker network ls --format "{{.Driver}}" 2>/dev/null | grep -q "^host$"; then
 			use_host_networking=true
-			networking_method="OrbStack (native host networking)"
-		# Check if Docker Desktop 4.34+ with host networking capability
-		elif docker version 2>/dev/null | grep -q "Docker Desktop"; then
-			local docker_version
-			docker_version=$(docker version --format '{{.Client.Version}}' 2>/dev/null)
-			if [[ -n "$docker_version" ]]; then
-				# Extract major.minor version (e.g., "4.34" from "4.34.2") 
-				local version_parts
-				IFS='.' read -ra version_parts <<< "$docker_version"
-				local major="${version_parts[0]}"
-				local minor="${version_parts[1]}"
-				
-				if [[ "$major" -gt 4 ]] || [[ "$major" -eq 4 && "$minor" -ge 34 ]]; then
-					use_host_networking=true
-					networking_method="Docker Desktop 4.34+ (host networking available)"
-				fi
-			fi
+			networking_method="Docker host networking"
+		else
+			networking_method="Docker bridge networking (host not available)"
 		fi
 		
 		if [[ "$use_host_networking" = true ]]; then
