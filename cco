@@ -919,6 +919,10 @@ if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		fi
 		exit 0
 		;;
+	info)
+		show_info
+		exit 0
+		;;
 	backup-creds)
 		backup_credentials
 		exit 0
@@ -954,10 +958,6 @@ if [[ "$subcommand_handled" = false ]]; then
 			;;
 		--version | -v)
 			show_version
-			exit 0
-			;;
-		--info)
-			show_info
 			exit 0
 			;;
 		--env | -e)
@@ -1001,11 +1001,11 @@ if [[ "$subcommand_handled" = false ]]; then
 			echo "  self-update       Update cco to latest version"
 			echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
 			echo "  cleanup           Remove all cco containers"
+			echo "  info              Show system information and readiness status"
 			echo ""
 			echo "Options:"
 			echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
 			echo "  --version, -v     Show version information"
-			echo "  --info            Show system information and readiness status"
 			echo "  --env, -e KEY=VAL Set environment variable in container"
 			echo "  --packages, -p    Install additional apt packages into container"
 			echo "  --docker          Enable Docker access (bind mount Docker socket)"
