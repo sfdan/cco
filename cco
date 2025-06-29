@@ -20,7 +20,9 @@ fi
 
 IMAGE_NAME="cco:latest"
 # Generate unique container name to allow concurrent sessions
-CONTAINER_NAME="cco-$(basename "$PWD")-$(date +%s)-$$"
+# Sanitize directory name for Docker container naming (only alphanumeric, underscore, dash, dot)
+sanitized_dir=$(basename "$PWD" | tr -c '[:alnum:]._-' '_')
+CONTAINER_NAME="cco-${sanitized_dir}-$(date +%s)-$$"
 
 # Colors for output
 RED='\033[0;31m'
