@@ -13,6 +13,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     postgresql-client sqlite3 \
     # Network and system tools
     netcat-openbsd telnet dnsutils iputils-ping \
+    # Media processing
+    ffmpeg \
     # Container tools
     docker.io \
     # System administration
