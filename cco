@@ -280,7 +280,7 @@ build_image() {
 
 	log "Building cco Docker image..."
 
-	# Always build from installation directory
+	# Build from the directory containing the cco script
 	cd "$CCO_INSTALLATION_DIR" || {
 		error "cco installation not found at $CCO_INSTALLATION_DIR"
 		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
@@ -306,13 +306,13 @@ build_image() {
 
 	if [[ -f "$custom_dockerfile" ]]; then
 		log "Using custom Dockerfile: $custom_dockerfile"
-		dockerfile_arg="-f $custom_dockerfile"
+		dockerfile_arg=("-f" "$custom_dockerfile")
 	else
 		log "Using default Dockerfile"
-		dockerfile_arg="-f Dockerfile"
+		dockerfile_arg=("-f" "Dockerfile")
 	fi
 
-	docker build -t "$IMAGE_NAME" "${build_args[@]}" "$dockerfile_arg" .
+	docker build -t "$IMAGE_NAME" "${build_args[@]}" "${dockerfile_arg[@]}" .
 	cd "$original_dir"
 	log "Image built successfully"
 }
