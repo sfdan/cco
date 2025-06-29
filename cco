@@ -596,6 +596,11 @@ run_container() {
 	# Load .env file if it exists
 	[[ -f ".env" ]] && docker_args+=(--env-file .env)
 
+	# Enable Claude Code background tasks by default (can be disabled with --disable-background-tasks)
+	if [[ "$enable_background_tasks" = true ]]; then
+		docker_args+=(-e "ENABLE_BACKGROUND_TASKS=1")
+	fi
+
 	# Enable Docker access if requested
 	if [[ "$docker_access" = true ]]; then
 		# Check for Docker socket locations (Linux and macOS with Docker Desktop)
@@ -938,6 +943,7 @@ custom_env_vars=()
 custom_packages=()
 docker_access=false
 allow_oauth_refresh=false
+enable_background_tasks=true
 
 if [[ "$subcommand_handled" = false ]]; then
 while [[ $# -gt 0 ]]; do
@@ -981,6 +987,10 @@ while [[ $# -gt 0 ]]; do
 		allow_oauth_refresh=true
 		shift
 		;;
+	--disable-background-tasks)
+		enable_background_tasks=false
+		shift
+		;;
 	--help | -h)
 		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
 		echo "A thin protective layer for Claude Code"
@@ -1004,6 +1014,10 @@ while [[ $# -gt 0 ]]; do
 		echo "                    Permits Claude to refresh expired tokens and syncs them back"
 		echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
 		echo "                    Creates timestamped backups and uses clondom protection"
+		echo "  --disable-background-tasks"
+		echo "                    Disable Claude Code background tasks (enabled by default)"
+		echo "                    Background tasks provide enhanced functionality like"
+		echo "                    improved code analysis and autonomous development features"
 		echo "  --help, -h        Show this help message"
 		echo ""
 		echo "All other arguments are passed to Claude Code inside the container."

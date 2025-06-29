@@ -56,6 +56,7 @@ You should barely notice `cco` is there, except for that reassuring feeling of s
 - **Host file access**: Your project files are mounted so Claude can read and edit them
 - **Network access**: Full host network access for localhost development servers, MCP servers, and web requests
 - **Credential management**: Authentication is handled securely without exposing host credentials
+- **Enhanced features**: Background tasks enabled by default for improved code analysis and autonomous development
 - **Full toolchain**: Container includes development tools, languages, and utilities Claude needs
 
 The result? Claude gets the `--dangerously-skip-permissions` experience it needs to be productive, while potential risks are contained within the sandbox.
@@ -179,6 +180,7 @@ cd cco
 - Terminal settings (`TERM`, `NO_COLOR`)
 - Git configuration
 - Locale and timezone
+- Claude Code background tasks enabled by default (use `--disable-background-tasks` to turn off)
 
 ### Project-level config
 ```bash
