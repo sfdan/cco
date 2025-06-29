@@ -4,7 +4,7 @@
 <hr>
 
 
-**cco** (Claude Container, or Claude Condom if you're so inclined) provides essential protection while Claude Code is up close and personal with your system.
+**cco** (Claude Container, or Claude Condom if you're so inclined) provides essential protection while Claude Code is up close and personal with your system. It uses Docker as a barrier to keep Claude contained while keeping your real system safe.
 
 ## Why protection matters
 
@@ -231,6 +231,25 @@ cco "review this pull request"
 - OAuth refresh (`--allow-oauth-refresh`) is experimental and may have issues
 - Fallback: authenticate directly with `claude` when tokens expire
 - Use credential backup/restore commands for safety: `cco backup-creds` / `cco restore-creds`
+
+### Known Issues
+
+**Token expires during active session (macOS)**
+If Claude stops responding with API errors during an active cco session, your OAuth token has likely expired mid-session. This is primarily a macOS issue due to credential storage differences.
+
+**Root cause**: When Claude Code runs inside the Linux container, it cannot directly update the macOS Keychain on the host system where credentials are stored. The OAuth refresh call is "coming from inside the house" but can't reach the host Keychain.
+
+**Workaround**:
+1. Open a new terminal window
+2. Run `claude` (outside cco) 
+3. Run `/login` to re-authenticate
+4. Exit the raw claude session
+5. Quit your current cco session
+6. Restart with `cco --resume` to pick up the refreshed credentials
+
+**Linux note**: This issue may not affect Linux systems where credentials are file-based and can potentially be updated with `--allow-oauth-refresh` flag, though this needs more testing.
+
+*PRs welcome to investigate cross-platform solutions for seamless credential refresh.*
 
 ### Debug access
 ```bash
