@@ -303,7 +303,7 @@ build_image() {
 	# Check for custom Dockerfile in XDG config directory
 	local custom_dockerfile="${XDG_CONFIG_HOME:-$HOME/.config}/cco/Dockerfile"
 	local dockerfile_arg=""
-	
+
 	if [[ -f "$custom_dockerfile" ]]; then
 		log "Using custom Dockerfile: $custom_dockerfile"
 		dockerfile_arg="-f $custom_dockerfile"
@@ -311,7 +311,7 @@ build_image() {
 		log "Using default Dockerfile"
 		dockerfile_arg="-f Dockerfile"
 	fi
-	
+
 	docker build -t "$IMAGE_NAME" "${build_args[@]}" "$dockerfile_arg" .
 	cd "$original_dir"
 	log "Image built successfully"
@@ -620,7 +620,7 @@ run_container() {
 	setup_container_networking() {
 		local use_host_networking=false
 		local networking_method=""
-		
+
 		# Check if Docker daemon supports host networking by looking for host network driver
 		if docker network ls --format "{{.Driver}}" 2>/dev/null | grep -q "^host$"; then
 			use_host_networking=true
@@ -628,7 +628,7 @@ run_container() {
 		else
 			networking_method="Docker bridge networking (host not available)"
 		fi
-		
+
 		if [[ "$use_host_networking" = true ]]; then
 			docker_args+=(--network=host)
 			log "Using host networking for MCP server access ($networking_method)"
@@ -636,7 +636,7 @@ run_container() {
 			docker_args+=(--add-host=host.docker.internal:host-gateway)
 			networking_method="host.docker.internal bridge"
 			log "Using bridge networking ($networking_method)"
-			
+
 			# Warn about MCP server connectivity limitations
 			if [[ -d "$HOME/.claude" && $(find "$HOME/.claude" -name "*.json" -exec grep -l "localhost\|127\.0\.0\.1" {} \; 2>/dev/null | wc -l) -gt 0 ]]; then
 				warn "Detected Claude configs referencing localhost - MCP servers may not be accessible"
@@ -645,7 +645,7 @@ run_container() {
 			fi
 		fi
 	}
-	
+
 	setup_container_networking
 
 	# Set up Claude Code configuration in container
@@ -819,7 +819,7 @@ restore_credentials() {
 
 		# Find the most recent backup file
 		backup_file=$(find "$backup_dir" -name "claude-credentials.*.json" -not -name "*.pre-restore.*" -type f -print0 2>/dev/null | xargs -0 ls -t | head -1)
-		
+
 		if [[ -z "$backup_file" ]]; then
 			error "No backup files found in: $backup_dir"
 			echo "Run './cco backup-creds' first to create a backup"
@@ -946,109 +946,109 @@ allow_oauth_refresh=false
 enable_background_tasks=true
 
 if [[ "$subcommand_handled" = false ]]; then
-while [[ $# -gt 0 ]]; do
-	case $1 in
-	--rebuild)
-		rebuild_image=true
-		shift
-		;;
-	--version | -v)
-		show_version
-		exit 0
-		;;
-	--info)
-		show_info
-		exit 0
-		;;
-	--env | -e)
-		if [[ $# -lt 2 ]]; then
-			error "--env requires an argument (KEY=VALUE or KEY)"
-			exit 1
-		fi
-		custom_env_vars+=("$2")
-		shift 2
-		;;
-	--packages | -p)
-		if [[ $# -lt 2 ]]; then
-			error "--packages requires an argument (package1,package2,...)"
-			exit 1
-		fi
-		IFS=',' read -ra ADDR <<<"$2"
-		for pkg in "${ADDR[@]}"; do
-			custom_packages+=("$pkg")
-		done
-		shift 2
-		;;
-	--docker)
-		docker_access=true
-		shift
-		;;
-	--allow-oauth-refresh)
-		allow_oauth_refresh=true
-		shift
-		;;
-	--disable-background-tasks)
-		enable_background_tasks=false
-		shift
-		;;
-	--help | -h)
-		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
-		echo "A thin protective layer for Claude Code"
-		echo ""
-		echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
-		echo ""
-		echo "Commands:"
-		echo "  self-update       Update cco to latest version"
-		echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
-		echo "  cleanup           Remove all cco containers"
-		echo ""
-		echo "Options:"
-		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
-		echo "  --version, -v     Show version information"
-		echo "  --info            Show system information and readiness status"
-		echo "  --env, -e KEY=VAL Set environment variable in container"
-		echo "  --packages, -p    Install additional apt packages into container"
-		echo "  --docker          Enable Docker access (bind mount Docker socket)"
-		echo "  --allow-oauth-refresh (EXPERIMENTAL)"
-		echo "                    Allow OAuth token refresh with automatic sync-back"
-		echo "                    Permits Claude to refresh expired tokens and syncs them back"
-		echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
-		echo "                    Creates timestamped backups and uses clondom protection"
-		echo "  --disable-background-tasks"
-		echo "                    Disable Claude Code background tasks (enabled by default)"
-		echo "                    Background tasks provide enhanced functionality like"
-		echo "                    improved code analysis and autonomous development features"
-		echo "  --help, -h        Show this help message"
-		echo ""
-		echo "All other arguments are passed to Claude Code inside the container."
-		echo "This means all Claude Code options (--resume, --model, etc.) work normally."
-		echo ""
-		echo "Experimental Commands:"
-		echo "  backup-creds      Create a backup of current Claude Code credentials"
-		echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
-		echo "                    or specify backup file path to restore specific backup"
-		echo ""
-		echo "Safety Recommendation:"
-		echo "  Before using --allow-oauth-refresh for the first time, run:"
-		echo "    cco backup-creds"
-		echo ""
-		echo "Environment Variables:"
-		echo "  - Automatically loads .env file if present"
-		echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
-		echo "  - Use --env to set custom variables"
-		echo ""
-		echo "Requirements:"
-		echo "  - Docker installed and running"
-		echo "  - Claude Code authenticated (run \`claude\` and login)"
-		exit 0
-		;;
-	*)
-		# Pass all other arguments to Claude
-		claude_args+=("$1")
-		shift
-		;;
-	esac
-done
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		--rebuild)
+			rebuild_image=true
+			shift
+			;;
+		--version | -v)
+			show_version
+			exit 0
+			;;
+		--info)
+			show_info
+			exit 0
+			;;
+		--env | -e)
+			if [[ $# -lt 2 ]]; then
+				error "--env requires an argument (KEY=VALUE or KEY)"
+				exit 1
+			fi
+			custom_env_vars+=("$2")
+			shift 2
+			;;
+		--packages | -p)
+			if [[ $# -lt 2 ]]; then
+				error "--packages requires an argument (package1,package2,...)"
+				exit 1
+			fi
+			IFS=',' read -ra ADDR <<<"$2"
+			for pkg in "${ADDR[@]}"; do
+				custom_packages+=("$pkg")
+			done
+			shift 2
+			;;
+		--docker)
+			docker_access=true
+			shift
+			;;
+		--allow-oauth-refresh)
+			allow_oauth_refresh=true
+			shift
+			;;
+		--disable-background-tasks)
+			enable_background_tasks=false
+			shift
+			;;
+		--help | -h)
+			echo "cco - Claude Container (or Claude Condom if you're so inclined)"
+			echo "A thin protective layer for Claude Code"
+			echo ""
+			echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
+			echo ""
+			echo "Commands:"
+			echo "  self-update       Update cco to latest version"
+			echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
+			echo "  cleanup           Remove all cco containers"
+			echo ""
+			echo "Options:"
+			echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
+			echo "  --version, -v     Show version information"
+			echo "  --info            Show system information and readiness status"
+			echo "  --env, -e KEY=VAL Set environment variable in container"
+			echo "  --packages, -p    Install additional apt packages into container"
+			echo "  --docker          Enable Docker access (bind mount Docker socket)"
+			echo "  --allow-oauth-refresh (EXPERIMENTAL)"
+			echo "                    Allow OAuth token refresh with automatic sync-back"
+			echo "                    Permits Claude to refresh expired tokens and syncs them back"
+			echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
+			echo "                    Creates timestamped backups and uses clondom protection"
+			echo "  --disable-background-tasks"
+			echo "                    Disable Claude Code background tasks (enabled by default)"
+			echo "                    Background tasks provide enhanced functionality like"
+			echo "                    improved code analysis and autonomous development features"
+			echo "  --help, -h        Show this help message"
+			echo ""
+			echo "All other arguments are passed to Claude Code inside the container."
+			echo "This means all Claude Code options (--resume, --model, etc.) work normally."
+			echo ""
+			echo "Experimental Commands:"
+			echo "  backup-creds      Create a backup of current Claude Code credentials"
+			echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
+			echo "                    or specify backup file path to restore specific backup"
+			echo ""
+			echo "Safety Recommendation:"
+			echo "  Before using --allow-oauth-refresh for the first time, run:"
+			echo "    cco backup-creds"
+			echo ""
+			echo "Environment Variables:"
+			echo "  - Automatically loads .env file if present"
+			echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
+			echo "  - Use --env to set custom variables"
+			echo ""
+			echo "Requirements:"
+			echo "  - Docker installed and running"
+			echo "  - Claude Code authenticated (run \`claude\` and login)"
+			exit 0
+			;;
+		*)
+			# Pass all other arguments to Claude
+			claude_args+=("$1")
+			shift
+			;;
+		esac
+	done
 fi
 
 # Main execution flow
