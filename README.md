@@ -8,9 +8,9 @@
 
 ## Why protection matters
 
-Running Claude Code with `--dangerously-skip-permissions` feels great - fast, responsive, no interruptions. But going in unprotected has risks.
+Running Claude Code with `--dangerously-skip-permissions` feels great - fast, responsive, no interruptions. But going in unprotected has risks: web search makes Claude vulnerable to prompt injections that could trick it into accessing files outside your project or running unexpected commands.
 
-**cco lets you have it both ways: all the pleasure of autonomous Claude, with a barrier between Claude and your machine's sensitive areas.**
+**`cco` lets you have it both ways: all the pleasure of autonomous Claude, with a barrier between Claude and your machine's sensitive areas.**
 
 ### The problem with exposure
 - **Leaves Claude Unprotected**: Lightning fast but vulnerable to nasty prompt injections
@@ -21,6 +21,8 @@ Running Claude Code with `--dangerously-skip-permissions` feels great - fast, re
 - **Barrier protection**: Keeps unwanted side effects contained
 - **Peace of mind**: Enjoy the experience without worry
 - **Easy cleanup**: Fresh environment every time
+
+For more information about `cco`'s security model, limitations, and threat analysis, see [SECURITY.md](SECURITY.md).
 
 ## Quick start
 
@@ -37,7 +39,7 @@ cco "help me refactor this code"
 
 ## Design philosophy
 
-**cco gets out of your way.** It's designed to feel natural - like using Claude directly, just safer.
+**`cco` gets out of your way.** It's designed to feel natural - like using Claude directly, just safer.
 
 - **Thin layer**: Barely noticeable protection
 - **Natural feel**: Works exactly like `claude` but protected
@@ -48,11 +50,11 @@ You should barely notice `cco` is there, except for that reassuring feeling of s
 
 ## How it works
 
-**cco runs Claude Code inside a Docker container.** This creates a sandboxed environment where Claude can operate with full autonomy while being isolated from your host system.
+**`cco` runs Claude Code inside a Docker container.** This creates a sandboxed environment where Claude can operate with full autonomy while being isolated from your host system.
 
 - **Docker sandbox**: Claude runs in an isolated container with its own filesystem
 - **Host file access**: Your project files are mounted so Claude can read and edit them
-- **Network isolation**: Claude's web access is contained within the container
+- **Network access**: Full host network access for localhost development servers, MCP servers, and web requests
 - **Credential management**: Authentication is handled securely without exposing host credentials
 - **Full toolchain**: Container includes development tools, languages, and utilities Claude needs
 
@@ -96,9 +98,9 @@ cco --rebuild
 # System information and status
 cco --info
 
-# Shell access for inspection
+# Shell access for inspecting the container environment
 cco shell
-cco shell 'ls -la'  # Run shell commands
+cco shell 'ls -la'  # Run shell commands inside the cco container
 
 # Custom environment
 cco --env API_KEY=sk-123
@@ -116,28 +118,9 @@ cco self-update
 cco cleanup
 ```
 
-### Experimental features
-⚠️ **These features are experimental and may have edge cases. Use with caution.**
-
-```bash
-# OAuth token refresh (EXPERIMENTAL)
-# Allows Claude to refresh expired tokens and sync back to host system
-cco --allow-oauth-refresh "help me code"
-
-# Credential management (EXPERIMENTAL)  
-# Backup and restore Claude Code credentials for safety
-cco backup-creds                    # Backup current credentials
-cco restore-creds                   # Restore from most recent backup
-cco restore-creds backup-file.json  # Restore from specific backup
-```
-
-**OAuth refresh feature**: Enables bidirectional credential sync when Claude refreshes expired tokens. Uses race condition protection and creates automatic backups.
-
-**Credential management**: Provides manual backup/restore of Claude Code credentials with cross-platform support (macOS Keychain + Linux files).
-
 ## Command Pass-through
 
-cco acts as a wrapper - any options it doesn't recognize get passed directly to Claude Code:
+`cco` acts as a wrapper - any options it doesn't recognize get passed directly to Claude Code:
 
 ```bash
 # These Claude Code options work normally
@@ -146,13 +129,52 @@ cco --model claude-3-5-sonnet-20241022 "write tests"
 cco --no-clipboard "analyze this file"
 
 # Mix cco and Claude options
-cco --env DEBUG=1 --resume  # cco + Claude options
+cco --env DEBUG=1 --resume  # `cco` + Claude options
+```
+
+## MCP Server Support
+
+`cco` uses host-based networking so that MCP (Model Context Protocol) servers or other tools you may have running on localhost are accessible to `cco`.
+
+- **OrbStack**: Native host networking support - MCP servers on localhost work automatically
+- **Docker Desktop 4.34+**: Host networking available - enable in Settings → Resources → Network
+- **Older Docker**: Uses `host.docker.internal` bridge - may require MCP server reconfiguration
+
+If you're using MCP servers with localhost addresses and they're not accessible, consider:
+1. Upgrading to Docker Desktop 4.34+ or switching to OrbStack
+2. Reconfiguring MCP servers to use `host.docker.internal` instead of `localhost`
+
+### Stdio-based MCP Servers
+
+**Important**: Stdio-based MCP servers need to be installed inside the container. `cco` cannot access stdio-based MCP servers that you have installed on your Mac/host system.
+
+This is because stdio MCP servers run as separate processes that Claude Code launches directly, and the container can only see programs installed within it.
+
+**If installable via apt:**
+```bash
+cco --packages your-mcp-server-package "help me code"
+```
+
+**For custom installation, modify the Dockerfile:**
+```bash
+# Clone or fork the cco repository
+git clone https://github.com/nikvdp/cco.git
+cd cco
+
+# Edit the Dockerfile to add your MCP server installations
+# Add lines like these before the final ENTRYPOINT/CMD:
+# RUN apt-get update && apt-get install -y your-mcp-server
+# RUN pip install your-python-mcp-server  
+# RUN npm install -g your-nodejs-mcp-server
+
+# Build your custom image
+./cco --rebuild "help me with MCP server functionality"
 ```
 
 ## Configuration
 
 ### Environment setup
-cco passes through everything you need:
+`cco` passes through everything you need:
 - `ANTHROPIC_API_KEY` - Direct access
 - Terminal settings (`TERM`, `NO_COLOR`)
 - Git configuration
@@ -172,7 +194,7 @@ cco
 - **Bash**: For the wrapper
 
 ### Authentication
-cco automatically finds your Claude credentials:
+`cco` automatically finds your Claude credentials:
 - **macOS**: Extracts from Keychain
 - **Linux**: Uses `~/.claude/.credentials.json` or config directory
 - **Environment**: `ANTHROPIC_API_KEY` passed through to container
@@ -207,16 +229,36 @@ export ANTHROPIC_API_KEY=sk-key
 cco "review this pull request"
 ```
 
+## Experimental Features
+
+⚠️ **These features are experimental and may have edge cases. Use with caution.**
+
+```bash
+# OAuth token refresh (EXPERIMENTAL)
+# Allows Claude to refresh expired tokens and sync back to host system
+cco --allow-oauth-refresh "help me code"
+
+# Credential management (EXPERIMENTAL)  
+# Backup and restore Claude Code credentials for safety
+cco backup-creds                    # Backup current credentials
+cco restore-creds                   # Restore from most recent backup
+cco restore-creds backup-file.json  # Restore from specific backup
+```
+
+**OAuth refresh feature**: Enables bidirectional credential sync when Claude refreshes expired tokens. Uses race condition protection and creates automatic backups.
+
+**Credential management**: Provides manual backup/restore of Claude Code credentials with cross-platform support (macOS Keychain + Linux files).
+
 ## Troubleshooting
 
 **Authentication issues**
 - Run `claude` first to authenticate
-- Check Claude works outside cco
+- Check Claude works outside `cco`
 
 **Token expiration**
 - If you get authentication errors, your OAuth token may have expired
 - The containerized environment prevents automatic token refresh by default
-- **Solution**: Run `claude` directly (outside cco) to re-authenticate, then retry with cco
+- **Solution**: Run `claude` directly (outside `cco`) to re-authenticate, then retry with `cco`
 - For automatic token refresh, try the experimental `--allow-oauth-refresh` flag (use with caution)
 
 **Docker problems**
@@ -224,7 +266,7 @@ cco "review this pull request"
 - Verify with `docker info`
 
 **Permission errors**
-- cco handles user mapping automatically
+- `cco` handles user mapping automatically
 - Try `cco --rebuild` if needed
 
 **Experimental features not working**
@@ -235,21 +277,24 @@ cco "review this pull request"
 ### Known Issues
 
 **Token expires during active session (macOS)**
-If Claude stops responding with API errors during an active cco session, your OAuth token has likely expired mid-session. This is primarily a macOS issue due to credential storage differences.
+If Claude stops responding with API errors during an active `cco` session, your OAuth token has likely expired mid-session. This is primarily a macOS issue due to credential storage differences.
 
 **Root cause**: When Claude Code runs inside the Linux container, it cannot directly update the macOS Keychain on the host system where credentials are stored. The OAuth refresh call is "coming from inside the house" but can't reach the host Keychain.
 
 **Workaround**:
 1. Open a new terminal window
-2. Run `claude` (outside cco) 
+2. Run `claude` (outside `cco`) 
 3. Run `/login` to re-authenticate
 4. Exit the raw claude session
-5. Quit your current cco session
+5. Quit your current `cco` session
 6. Restart with `cco --resume` to pick up the refreshed credentials
 
 **Linux note**: This issue may not affect Linux systems where credentials are file-based and can potentially be updated with `--allow-oauth-refresh` flag, though this needs more testing.
 
 *PRs welcome to investigate cross-platform solutions for seamless credential refresh.*
+
+**Stdio-based MCP servers not available**
+If Claude reports that stdio-based MCP servers are not found or not working, they need to be installed inside the container. See [MCP Server Support](#mcp-server-support) section for installation instructions.
 
 ### Debug access
 ```bash
@@ -259,11 +304,19 @@ cco --info  # Check system status
 
 ## Security
 
-cco provides a significant layer of protection, but like any barrier method, it's not 100% foolproof. It's certainly better than nothing, but:
+`cco` provides protection primarily through filesystem isolation and credential management. **Important limitations to understand:**
 
-- Keep your protection up to date
-- Check it's working properly before each session
-- Remember that no method is perfect
+### What `cco` protects against:
+- Uncontrolled file system access outside your project
+- Credential exposure and improper credential handling
+- System-level changes that persist after sessions
+
+### What `cco` does NOT protect against:
+- **Network security**: Claude has full access to your network and localhost services
+- **Data exfiltration**: Claude can still make web requests and access network resources
+- **Local service access**: Claude can connect to databases, APIs, and other services on your system
+
+**Network access is intentionally unrestricted** to support MCP servers and maintain Claude's full functionality. The primary security benefits come from filesystem and credential isolation, not network isolation.
 
 **For detailed security information, threat model, and limitations, see [SECURITY.md](SECURITY.md).**
 

@@ -1,6 +1,6 @@
 # Security
 
-cco is designed to provide container-based sandboxing for Claude Code. This document provides a serious assessment of what cco protects against and what it does not.
+`cco` is designed to provide container-based sandboxing for Claude Code. This document provides a serious assessment of what `cco` protects against and what it does not.
 
 ## The Problem: Claude Code Security Limitations
 
@@ -28,20 +28,20 @@ Claude Code runs directly on the host system with full user privileges:
 - Can install software packages
 - Can establish network connections
 
-## How cco Provides Protection
+## How `cco` Provides Protection
 
-cco addresses these vulnerabilities through strict containerization:
+`cco` addresses these vulnerabilities through strict containerization:
 
 ### Enforced Sandbox
 - **Complete filesystem isolation**: Claude Code can only access the container filesystem plus explicitly mounted directories
 - **No directory escape**: Even if Claude tries to `cd /`, it only reaches the container root
 - **Process isolation**: Claude's processes are contained within the container namespace
 
-### Network Containment
-- **Isolated network namespace**: Container cannot access host localhost services
+### Network Access (Unrestricted)
+- **Full host network access**: Container shares host network namespace for MCP server connectivity
 - **Internet access**: Can make outbound connections (for Claude's API calls and web search)
-- **No host network access**: Cannot connect to host services on 127.0.0.1
-- **Standard Docker networking**: Uses container DNS resolution
+- **Host service access**: Can connect to services on localhost/127.0.0.1
+- **MCP server support**: Can reach Model Context Protocol servers running on host
 
 ### Privilege Restriction  
 - **Dynamic user creation**: Container starts as root, creates mapped user, then switches to unprivileged user
@@ -56,7 +56,7 @@ cco addresses these vulnerabilities through strict containerization:
 
 ## Threat Model
 
-### ✅ What cco PREVENTS
+### ✅ What `cco` PREVENTS
 
 **Filesystem Attacks**:
 - Host filesystem modification outside project directory
@@ -66,11 +66,11 @@ cco addresses these vulnerabilities through strict containerization:
 
 **Note**: SSH keys (`~/.ssh`) ARE accessible for git authentication
 
-**Network Attacks**:
-- Connection to internal services (databases, admin panels)
-- Port scanning of internal networks
-- Exfiltration via network connections
-- Establishing backdoor network access
+**System Persistence**:
+- Permanent modification of host system configuration
+- Installation of persistent backdoors on host filesystem
+- Creation of system startup scripts or services
+- Modification of host system packages or services
 
 **Privilege Escalation**:
 - Running commands as root or other users
@@ -83,7 +83,7 @@ cco addresses these vulnerabilities through strict containerization:
 - Modifying system startup scripts
 - Installing rootkits or system-level malware
 
-### ❌ What cco does NOT prevent
+### ❌ What `cco` does NOT prevent
 
 **Project Directory Compromise**:
 - Complete control over mounted project files
@@ -92,10 +92,12 @@ cco addresses these vulnerabilities through strict containerization:
 - Git repository manipulation (commits, branch changes)
 - Access to SSH keys (for git authentication)
 
-**Data Exfiltration**:
-- Sending project data via Claude's API connections
-- Including sensitive data in Claude conversations
-- Uploading project files to external services via web APIs
+**Network-Based Attacks**:
+- **Full network access**: Can connect to any network service, internal or external
+- **Local service access**: Can reach databases, admin panels, development servers on localhost
+- **Data exfiltration**: Can send data via network connections, web APIs, or Claude's API
+- **Port scanning**: Can discover and probe internal network services
+- **MCP server abuse**: Can interact with any Model Context Protocol servers on the host
 
 **Resource Abuse** (Partially Mitigated):
 - CPU/memory consumption (limited by Docker container limits if configured)
@@ -103,7 +105,7 @@ cco addresses these vulnerabilities through strict containerization:
 - Disk space consumption in container (limited to container filesystem size)
 
 **Social Engineering**:
-- Convincing user to run malicious commands outside cco
+- Convincing user to run malicious commands outside `cco`
 - Displaying misleading information to the user
 - Requesting user to install additional software
 
@@ -115,13 +117,13 @@ cco addresses these vulnerabilities through strict containerization:
 
 ### Container Security Features
 
-cco implements several container hardening measures:
+`cco` implements several container hardening measures:
 
 **User Management**: Container starts as root to create a user matching the host UID/GID, then switches to that unprivileged user for all Claude Code execution.
 
 **Minimal Capabilities**: Uses only standard Docker networking capabilities. No elevated privileges like network interface manipulation or raw socket access.
 
-**Network Isolation**: Container runs in its own network namespace, isolated from host services and other containers.
+**Network Configuration**: Container uses host networking (`--network=host`) to enable MCP server connectivity. This provides full access to host network services but is necessary for intended functionality.
 
 **Filesystem Protection**: Claude configuration and SSH keys are mounted read-only to prevent modification.
 
@@ -149,7 +151,7 @@ cco implements several container hardening measures:
 
 **Security Implications**:
 - **Credential write access**: Claude gains ability to modify authentication credentials
-- **Race condition risk**: Multiple cco instances could corrupt credentials (mitigated by "clondom" protection)
+- **Race condition risk**: Multiple `cco` instances could corrupt credentials
 - **Sync-back attacks**: Malicious content could potentially manipulate token refresh to corrupt host credentials
 - **Increased attack surface**: More complex credential handling creates more failure modes
 
@@ -178,7 +180,7 @@ These experimental features are disabled by default. Only enable them if you und
 
 ## Risk Assessment
 
-### High Risk Scenarios (Mitigated by cco)
+### High Risk Scenarios (Mitigated by `cco`)
 - **Malicious web content instructs Claude to modify system files**: Contained to container
 - **Prompt injection causes Claude to scan internal network**: Network isolated
 - **Claude attempts to install backdoor software**: No system access
@@ -197,7 +199,7 @@ These experimental features are disabled by default. Only enable them if you und
 1. **Review changes**: Always inspect code modifications before committing
 2. **Limit sensitive data**: Don't store credentials in project directories
 3. **Use version control**: Track all changes to detect unauthorized modifications
-4. **Regular updates**: Keep cco updated with latest security improvements
+4. **Regular updates**: Keep `cco` updated with latest security improvements
 
 ### For Sensitive Projects
 1. **Isolated environment**: Use dedicated machines for highly sensitive work
@@ -213,7 +215,7 @@ These experimental features are disabled by default. Only enable them if you und
 
 ## Limitations and Assumptions
 
-cco's security model assumes:
+`cco`'s security model assumes:
 
 1. **Container technology works**: Docker provides effective isolation
 2. **Host system security**: Host is not already compromised
