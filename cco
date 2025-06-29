@@ -312,7 +312,7 @@ build_image() {
 		dockerfile_arg="-f Dockerfile"
 	fi
 	
-	docker build -t "$IMAGE_NAME" "${build_args[@]}" $dockerfile_arg .
+	docker build -t "$IMAGE_NAME" "${build_args[@]}" "$dockerfile_arg" .
 	cd "$original_dir"
 	log "Image built successfully"
 }
