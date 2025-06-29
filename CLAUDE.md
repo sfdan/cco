@@ -100,6 +100,158 @@ Why this matters:
 - Project config is local overrides (safe to modify)
 - Credentials are runtime-only (never persist)
 
+## OAuth Credential Refresh Architecture
+
+### The Platform Challenge
+
+**macOS vs Linux credential storage creates fundamental architectural differences:**
+
+#### macOS Host Systems
+- **Credentials**: Stored in macOS Keychain, accessed via `security` command
+- **No credential file**: No `~/.claude/.credentials.json` exists on host
+- **Container problem**: Linux container cannot directly access macOS Keychain
+- **Bridge requirement**: Must create/maintain a credential file for containers
+
+#### Linux Host Systems  
+- **Credentials**: Stored in `~/.claude/.credentials.json` file
+- **Direct mounting**: Can bind mount actual credential file to containers
+- **Simple flow**: Container updates propagate directly to host
+
+### The OAuth Refresh Problem
+
+**Current Issue (as of 2025-06-29):**
+1. Container mounts credentials read-only → OAuth refresh fails in container
+2. Even with `--allow-oauth-refresh`, macOS Keychain updates fail from container context
+3. Token expiration during session requires manual restart workflow
+
+**Root Cause:**
+- macOS: Container process cannot write to host Keychain due to security restrictions
+- Linux: Should work but needs read-write credential mounting
+- Race conditions: Multiple cco sessions can invalidate each other's refresh tokens
+
+### Proposed Solution Architecture
+
+#### Core Principles
+1. **Centralized credential state**: All sessions share single credential source
+2. **Platform-specific bridging**: Handle macOS/Linux differences transparently  
+3. **Real-time sync**: Changes propagate between container and host
+4. **Atomic updates**: File locking prevents race conditions
+
+#### Implementation Plan
+
+**macOS Host Flow:**
+```
+Keychain → ~/.local/share/cco/credentials.json → Container (r/w mount)
+   ↑              ↓
+   └─── Sync ─────┘ (on container credential updates)
+```
+
+**Linux Host Flow:**
+```
+~/.claude/.credentials.json → Container (r/w mount, direct)
+```
+
+**Key Components:**
+1. **Bridge file**: `~/.local/share/cco/credentials.json` for macOS hosts
+2. **Credential sync**: Host process monitors container updates
+3. **Polling-based**: Simple file watching (2-second intervals)
+4. **File locking**: Prevent concurrent refresh conflicts
+
+### Implementation Details
+
+#### Startup Credential Setup
+```bash
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS: Extract Keychain → bridge file
+    local bridge_creds="${XDG_DATA_HOME:-$HOME/.local/share}/cco/credentials.json"
+    mkdir -p "$(dirname "$bridge_creds")"
+    security find-generic-password -s "Claude Code-credentials" -a "$USER" -w > "$bridge_creds"
+    docker_args+=(-v "$bridge_creds":"$container_home/.claude/.credentials.json")
+else
+    # Linux: Direct mount
+    docker_args+=(-v "$host_system_claude_dir/.credentials.json":"$container_home/.claude/.credentials.json")
+fi
+```
+
+#### Background Sync Process (macOS only)
+```bash
+start_credential_sync() {
+    local bridge_file="$1"
+    while container_running; do
+        if file_changed "$bridge_file"; then
+            # Container updated credentials, sync to Keychain
+            flock "$bridge_file.lock" security add-generic-password -U [...]
+        fi
+        sleep 2
+    done
+}
+```
+
+#### Communication Directory
+- **Location**: `$PWD/.cco/comm/` (per-project to avoid session conflicts)
+- **Purpose**: Signal credential updates from container to host
+- **Files**: Flag files like `credential-updated` for event notification
+
+### Current Limitations & Future Work
+
+#### What We're Implementing First
+1. **cco-initiated OAuth refresh**: Container → host credential updates
+2. **Centralized cco state**: All cco sessions share credential bridge
+3. **Basic file locking**: Prevent refresh token race conditions
+
+#### What We're NOT Implementing Initially
+1. **External Claude detection**: No polling of Keychain for external changes
+2. **Bidirectional sync**: External macOS Claude updates won't auto-propagate to cco
+3. **Advanced conflict resolution**: Basic file locking only
+
+#### Known Edge Cases
+- **External Claude updates**: User must manually restart cco sessions
+- **Keychain authorization**: May require user interaction on first run
+- **Multiple host users**: Bridge files are per-user in XDG data directory, no shared state
+
+### Security Considerations
+
+#### Keychain Access Model
+- **Terminal context**: Better Keychain access than container processes
+- **User authorization**: May prompt for permission on first credential access
+- **Credential exposure**: Bridge files contain plaintext credentials (600 permissions)
+
+#### File Security
+- **Bridge file**: `~/.local/share/cco/credentials.json` with 600 permissions
+- **Lock files**: Prevent concurrent access during updates
+- **Cleanup**: Remove bridge files on exit (or persist for performance?)
+
+### Debugging OAuth Issues
+
+#### Common Failure Scenarios
+1. **Container read-only mount**: Check mount permissions in docker args
+2. **Keychain write failure**: Terminal context vs container context permissions
+3. **Race conditions**: Multiple sessions refreshing simultaneously
+4. **File locking**: Deadlocks or permission issues with lock files
+
+#### Diagnostic Commands
+```bash
+# Check bridge file exists and has content
+ls -la ~/.local/share/cco/credentials.json
+
+# Verify Keychain access
+security find-generic-password -s "Claude Code-credentials" -a "$USER" -w
+
+# Test container credential access
+./cco shell 'cat ~/.claude/.credentials.json | head -1'
+```
+
+### Architecture Evolution
+
+This OAuth refresh architecture represents a significant evolution in cco's credential handling:
+
+**Phase 1 (Original)**: Simple credential extraction and read-only mounting
+**Phase 2 (Current)**: Experimental OAuth refresh with sync-back attempts  
+**Phase 3 (Proposed)**: Centralized credential state with platform-specific bridges
+**Phase 4 (Future)**: Full bidirectional sync with external Claude detection
+
+The architecture must balance security, reliability, and user experience while handling the fundamental differences between macOS and Linux credential storage models.
+
 ## Development Workflow
 
 ### Pre-Commit Safety Ritual
