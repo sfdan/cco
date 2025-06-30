@@ -1,9 +1,13 @@
-FROM node:20-bookworm
+FROM debian:bookworm
 
-# Install system dependencies and modern shell tools
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+# Install Node.js via NodeSource repository and all system dependencies in one layer
+RUN apt-get update && apt-get install -y curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    # Node.js from NodeSource
+    nodejs \
     # Core development tools
-    build-essential git curl wget vim nano \
+    build-essential git wget vim nano \
     # Modern shell tools
     jq ripgrep fzf fd-find bat htop tmux shellcheck \
     # Languages and runtimes

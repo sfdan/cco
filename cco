@@ -656,12 +656,8 @@ run_container() {
 	local project_claude_dir="$current_dir/.claude"
 
 	# Determine the target user's home directory in container
-	local container_home
-	if [[ "$host_uid" = "1000" ]]; then
-		container_home="/home/node"
-	else
-		container_home="/home/hostuser"
-	fi
+	# Always use hostuser now that we don't have a pre-existing node user
+	local container_home="/home/hostuser"
 
 	# Let Claude Code auto-detect its config directory (don't override with CLAUDE_CONFIG_DIR)
 
