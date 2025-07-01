@@ -40,6 +40,21 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
+# Install JavaScript/TypeScript development tools
+RUN npm install -g \
+    ts-node \
+    tsx \
+    yarn \
+    pnpm
+
+# Install bun (JavaScript runtime)
+RUN curl -fsSL https://bun.sh/install | bash \
+    && mv /root/.bun/bin/bun /usr/local/bin/bun
+
+# Install mise (polyglot runtime manager)
+RUN curl https://mise.run | sh \
+    && mv /root/.local/bin/mise /usr/local/bin/mise
+
 # Install shfmt (shell formatter)
 RUN ARCH=$(case $(uname -m) in x86_64) echo amd64;; aarch64) echo arm64;; *) echo amd64;; esac) \
     && SHFMT_VERSION=$(curl -s https://api.github.com/repos/mvdan/sh/releases/latest | jq -r .tag_name) \
