@@ -61,8 +61,10 @@ RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Install Claude Code CLI (last for better caching - this changes most frequently)
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code CLI (always fetch latest version)
+ARG CACHE_BUST=default
+RUN echo "Cache bust: ${CACHE_BUST}" && \
+    npm install -g @anthropic-ai/claude-code@latest
 
 # Don't set a default user - let the entrypoint handle user creation and setup
 # The entrypoint will create the appropriate user and set HOME correctly

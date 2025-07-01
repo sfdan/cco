@@ -314,6 +314,9 @@ build_image() {
 		dockerfile_arg=("-f" "Dockerfile")
 	fi
 
+	# Add cache-busting argument to force Claude Code reinstallation on --rebuild
+	build_args+=(--build-arg CACHE_BUST="$(date +%s)")
+	
 	docker build -t "$IMAGE_NAME" "${build_args[@]}" "${dockerfile_arg[@]}" .
 	cd "$original_dir"
 	log "Image built successfully"
