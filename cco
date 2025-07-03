@@ -251,7 +251,7 @@ should_use_prebuilt_image() {
 get_prebuilt_image_tag() {
 	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local commit_sha
-		commit_sha=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse HEAD 2>/dev/null)
+		commit_sha=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null)
 		echo "ghcr.io/nikvdp/cco:${commit_sha}"
 	else
 		echo "ghcr.io/nikvdp/cco:latest"
