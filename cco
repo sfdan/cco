@@ -336,6 +336,14 @@ build_image() {
 	# Add cache-busting argument to force Claude Code reinstallation on --rebuild
 	build_args+=(--build-arg CACHE_BUST="$(date +%s)")
 
+	# Use cache-from if we have a local pre-built image available
+	local prebuilt_image_tag
+	prebuilt_image_tag=$(get_prebuilt_image_tag)
+	if docker image inspect "$prebuilt_image_tag" &>/dev/null; then
+		log "Using local pre-built image for build cache: $prebuilt_image_tag"
+		build_args+=(--cache-from "$prebuilt_image_tag")
+	fi
+
 	docker build -t "$IMAGE_NAME" "${build_args[@]}" "${dockerfile_arg[@]}" .
 	cd "$original_dir"
 	log "Image built successfully"
