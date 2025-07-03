@@ -56,10 +56,14 @@ RUN curl https://mise.run | sh \
     && mv /root/.local/bin/mise /usr/local/bin/mise
 
 # Install shfmt (shell formatter)
-RUN ARCH=$(case $(uname -m) in x86_64) echo amd64;; aarch64) echo arm64;; *) echo amd64;; esac) \
+RUN ARCH=$(case $(uname -m) in x86_64) echo amd64;; aarch64) echo arm64;; armv7l) echo arm;; *) echo amd64;; esac) \
     && SHFMT_VERSION=$(curl -s https://api.github.com/repos/mvdan/sh/releases/latest | jq -r .tag_name) \
-    && curl -fsSL "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_${ARCH}" -o /usr/local/bin/shfmt \
-    && chmod +x /usr/local/bin/shfmt
+    && echo "Downloading shfmt ${SHFMT_VERSION} for architecture: $ARCH" \
+    && SHFMT_URL="https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_${ARCH}" \
+    && echo "URL: $SHFMT_URL" \
+    && curl -fsSL "$SHFMT_URL" -o /usr/local/bin/shfmt \
+    && chmod +x /usr/local/bin/shfmt \
+    && /usr/local/bin/shfmt --version
 
 # Create symlinks for fd (some systems call it fdfind)
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
