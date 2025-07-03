@@ -951,6 +951,24 @@ if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		restore_credentials "$2"
 		exit 0
 		;;
+	pull)
+		log "Pulling latest pre-built image..."
+		check_dependencies
+		if pull_prebuilt_image; then
+			log "Pull completed successfully"
+		else
+			error "Failed to pull pre-built image"
+			exit 1
+		fi
+		exit 0
+		;;
+	rebuild)
+		log "Rebuilding cco image..."
+		check_dependencies
+		build_image
+		log "Rebuild completed successfully"
+		exit 0
+		;;
 	*)
 		# Not a subcommand, continue with flag processing
 		;;
@@ -959,6 +977,7 @@ fi
 
 # Handle command line arguments
 rebuild_image=false
+pull_image=false
 if [[ "$subcommand_handled" = false ]]; then
 	claude_args=()
 	shell_mode=false
@@ -974,6 +993,10 @@ if [[ "$subcommand_handled" = false ]]; then
 		case $1 in
 		--rebuild)
 			rebuild_image=true
+			shift
+			;;
+		--pull)
+			pull_image=true
 			shift
 			;;
 		--version | -v)
@@ -1022,9 +1045,12 @@ if [[ "$subcommand_handled" = false ]]; then
 			echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
 			echo "  cleanup           Remove all cco containers"
 			echo "  info              Show system information and readiness status"
+			echo "  pull              Pull latest pre-built image from registry"
+			echo "  rebuild           Rebuild Docker image from source"
 			echo ""
 			echo "Options:"
 			echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
+			echo "  --pull            Pull latest pre-built image before starting container"
 			echo "  --version, -v     Show version information"
 			echo "  --env, -e KEY=VAL Set environment variable in container"
 			echo "  --packages, -p    Install additional apt packages into container"
@@ -1077,6 +1103,16 @@ main() {
 
 	check_dependencies
 	verify_claude_authentication
+
+	# Handle --pull flag first 
+	if [[ "$pull_image" = true ]]; then
+		log "Pulling latest pre-built image..."
+		if pull_prebuilt_image; then
+			log "Pull completed successfully"
+		else
+			warn "Failed to pull pre-built image, using existing or building locally"
+		fi
+	fi
 
 	# Determine whether to pull pre-built image or build locally
 	if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
