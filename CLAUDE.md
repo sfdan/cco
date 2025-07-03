@@ -77,15 +77,20 @@ host:~/.claude → container:$PROJECT/.claude ❌
 ### User Creation Strategy (docker-entrypoint.sh)
 The container starts as root, creates a user matching host UID/GID, then switches to that user:
 ```bash
-if [ "$HOST_UID" = "1000" ]; then
-    # Use existing node user (Node.js base image conflict)
-    USER_NAME="node"
-elif ! id -u "$HOST_UID"; then
-    # Create new user for non-standard UIDs (like macOS 501)
-    useradd -u "$HOST_UID" -g "$HOST_GID" hostuser
+if ! id -u "$HOST_UID"; then
+    # Create new user with exact host UID/GID mapping
+    useradd -u "$HOST_UID" -g "$HOST_GID" -d /home/hostuser -s /bin/bash -m hostuser
     USER_NAME="hostuser"
+else
+    # User already exists
+    USER_NAME=$(id -nu "$HOST_UID")
 fi
 ```
+
+**Key changes from earlier versions:**
+- Removed Node.js base image dependency (now uses clean Debian base)
+- Always creates `hostuser` for consistent behavior across platforms
+- No special case for UID 1000 (eliminates permission conflicts)
 
 ### Configuration Mounting Rules
 ```bash
