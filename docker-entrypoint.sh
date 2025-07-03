@@ -35,7 +35,7 @@ else
 fi
 
 # Configure passwordless sudo for the user
-echo "$USER_NAME ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$USER_NAME"
+echo "$USER_NAME ALL=(ALL) NOPASSWD:ALL" >"/etc/sudoers.d/$USER_NAME"
 chmod 440 "/etc/sudoers.d/$USER_NAME"
 
 # Ensure home directory exists and has correct ownership (for all cases)
