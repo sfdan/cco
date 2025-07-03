@@ -19,14 +19,7 @@ if ! getent group "$HOST_GID" >/dev/null 2>&1; then
 fi
 
 # Handle user creation/modification
-if [ "$HOST_UID" = "1000" ]; then
-	# UID 1000 is the node user, just ensure it's in the right group
-	usermod -a -G "$HOST_GID" node 2>/dev/null || true
-	# Add to sudo group with passwordless sudo
-	usermod -a -G sudo node 2>/dev/null || true
-	USER_NAME="node"
-	USER_HOME="/home/node"
-elif ! id -u "$HOST_UID" >/dev/null 2>&1; then
+if ! id -u "$HOST_UID" >/dev/null 2>&1; then
 	# Create new user (suppress UID range warning for macOS UIDs)
 	UID_MIN=100 UID_MAX=65000 useradd -u "$HOST_UID" -g "$HOST_GID" -d /home/hostuser -s /bin/bash -m hostuser 2>/dev/null || useradd -u "$HOST_UID" -g "$HOST_GID" -d /home/hostuser -s /bin/bash -m hostuser
 	# Add to sudo group with passwordless sudo
