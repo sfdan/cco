@@ -265,13 +265,19 @@ pull_prebuilt_image() {
 
 	log "Attempting to pull pre-built image: $image_tag"
 
-	if docker pull "$image_tag" >/dev/null 2>&1; then
+	# Try to pull with timeout and show progress
+	if timeout 60 docker pull "$image_tag" 2>&1; then
 		# Tag as local image name for consistency
 		docker tag "$image_tag" "$IMAGE_NAME" >/dev/null 2>&1
 		log "Successfully pulled pre-built image"
 		return 0
 	else
-		warn "Could not pull pre-built image, building locally..."
+		local exit_code=$?
+		if [ $exit_code = 124 ]; then
+			warn "Pre-built image pull timed out after 60 seconds, building locally..."
+		else
+			warn "Could not pull pre-built image, building locally..."
+		fi
 		return 1
 	fi
 }
