@@ -5,6 +5,8 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC for fresh Claude Code
 
 env:
   REGISTRY: ghcr.io
@@ -61,8 +63,13 @@ jobs:
         # Get current commit SHA (short)
         CURRENT_SHA=$(git rev-parse --short HEAD)
         
-        # Get previous commit SHA (short)
-        PREV_SHA=$(git rev-parse --short HEAD~1)
+        # Try to get previous commit SHA (short), handle first commit case
+        if git rev-parse --short HEAD~1 >/dev/null 2>&1; then
+          PREV_SHA=$(git rev-parse --short HEAD~1)
+        else
+          echo "No previous commit found (likely first commit)"
+          PREV_SHA=""
+        fi
         
         # Get architecture suffix for tags
         ARCH_SUFFIX=$(echo "${{ matrix.platform }}" | cut -d'/' -f2)
@@ -70,32 +77,45 @@ jobs:
         # Define potential cache sources in order of preference
         CACHE_SOURCES=()
         
-        # 1. Try current commit (arch-specific)
+        echo "Checking for cache sources for architecture: ${ARCH_SUFFIX}"
+        
+        # 1. Try current commit (arch-specific) - useful for rebuilds
         if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}-${ARCH_SUFFIX} >/dev/null 2>&1; then
-          echo "Found cache for current commit: ${CURRENT_SHA}-${ARCH_SUFFIX}"
+          echo "✓ Found cache for current commit: ${CURRENT_SHA}-${ARCH_SUFFIX}"
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}-${ARCH_SUFFIX}")
+        else
+          echo "✗ No cache found for current commit: ${CURRENT_SHA}-${ARCH_SUFFIX}"
         fi
         
-        # 2. Try previous commit (arch-specific)
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}-${ARCH_SUFFIX} >/dev/null 2>&1; then
-          echo "Found cache for previous commit: ${PREV_SHA}-${ARCH_SUFFIX}"
-          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}-${ARCH_SUFFIX}")
+        # 2. Try previous commit (arch-specific) if it exists
+        if [[ -n "$PREV_SHA" ]]; then
+          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}-${ARCH_SUFFIX} >/dev/null 2>&1; then
+            echo "✓ Found cache for previous commit: ${PREV_SHA}-${ARCH_SUFFIX}"
+            CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}-${ARCH_SUFFIX}")
+          else
+            echo "✗ No cache found for previous commit: ${PREV_SHA}-${ARCH_SUFFIX}"
+          fi
         fi
         
         # 3. Try latest as fallback (arch-specific)
         if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${ARCH_SUFFIX} >/dev/null 2>&1; then
-          echo "Found cache for latest: latest-${ARCH_SUFFIX}"
+          echo "✓ Found cache for latest: latest-${ARCH_SUFFIX}"
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${ARCH_SUFFIX}")
+        else
+          echo "✗ No cache found for latest: latest-${ARCH_SUFFIX}"
         fi
         
-        # 4. Always include GitHub Actions cache
+        # 4. Always include GitHub Actions cache as final fallback
         CACHE_SOURCES+=("type=gha")
+        echo "✓ Added GitHub Actions cache as fallback"
         
         # Convert array to comma-separated string
         IFS=','
         CACHE_FROM="${CACHE_SOURCES[*]}"
         
-        echo "Cache sources: ${CACHE_FROM}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Final cache sources: ${CACHE_FROM}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "cache_from=${CACHE_FROM}" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
@@ -119,6 +139,42 @@ jobs:
         mkdir -p /tmp/digests
         digest="${{ steps.build.outputs.digest }}"
         touch "/tmp/digests/${digest#sha256:}"
+
+    - name: Push architecture-specific tags
+      if: github.event_name != 'pull_request'
+      run: |
+        # Get architecture suffix
+        ARCH_SUFFIX=$(echo "${{ matrix.platform }}" | cut -d'/' -f2)
+        
+        # Get current commit SHA (short)
+        CURRENT_SHA=$(git rev-parse --short HEAD)
+        
+        echo "Creating architecture-specific tags for ${ARCH_SUFFIX}"
+        echo "Digest: ${{ steps.build.outputs.digest }}"
+        
+        # Pull the image by digest with error handling
+        if ! docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}; then
+          echo "Failed to pull image by digest, skipping architecture-specific tagging"
+          exit 0
+        fi
+        
+        # Tag with architecture-specific tags
+        docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}-${ARCH_SUFFIX}
+        
+        # Push architecture-specific tag
+        echo "Pushing ${CURRENT_SHA}-${ARCH_SUFFIX}"
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}-${ARCH_SUFFIX}
+        
+        # If on master branch, also push latest-arch tag
+        if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+          echo "On master branch, also pushing latest-${ARCH_SUFFIX}"
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${ARCH_SUFFIX}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${ARCH_SUFFIX}
+        fi
+        
+        echo "Architecture-specific tagging completed for ${ARCH_SUFFIX}"
 
     - name: Upload digest
       if: github.event_name != 'pull_request'
