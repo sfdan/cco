@@ -52,6 +52,8 @@ jobs:
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
           type=raw,value={{sha}}
+          type=raw,value={{sha}}-{{arch}}
+          type=raw,value=latest-{{arch}},enable={{is_default_branch}}
 
     - name: Prepare build cache sources
       id: cache_sources
@@ -62,25 +64,28 @@ jobs:
         # Get previous commit SHA (short)
         PREV_SHA=$(git rev-parse --short HEAD~1)
         
+        # Get architecture suffix for tags
+        ARCH_SUFFIX=$(echo "${{ matrix.platform }}" | cut -d'/' -f2)
+        
         # Define potential cache sources in order of preference
         CACHE_SOURCES=()
         
-        # 1. Try current commit (platform-specific)
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA} --platform ${{ matrix.platform }} >/dev/null 2>&1; then
-          echo "Found cache for current commit (${CURRENT_SHA}) on ${{ matrix.platform }}"
-          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}")
+        # 1. Try current commit (arch-specific)
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}-${ARCH_SUFFIX} >/dev/null 2>&1; then
+          echo "Found cache for current commit: ${CURRENT_SHA}-${ARCH_SUFFIX}"
+          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}-${ARCH_SUFFIX}")
         fi
         
-        # 2. Try previous commit (platform-specific)
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA} --platform ${{ matrix.platform }} >/dev/null 2>&1; then
-          echo "Found cache for previous commit (${PREV_SHA}) on ${{ matrix.platform }}"
-          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}")
+        # 2. Try previous commit (arch-specific)
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}-${ARCH_SUFFIX} >/dev/null 2>&1; then
+          echo "Found cache for previous commit: ${PREV_SHA}-${ARCH_SUFFIX}"
+          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}-${ARCH_SUFFIX}")
         fi
         
-        # 3. Try latest as fallback (platform-specific)
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --platform ${{ matrix.platform }} >/dev/null 2>&1; then
-          echo "Found cache for latest on ${{ matrix.platform }}"
-          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest")
+        # 3. Try latest as fallback (arch-specific)
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${ARCH_SUFFIX} >/dev/null 2>&1; then
+          echo "Found cache for latest: latest-${ARCH_SUFFIX}"
+          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${ARCH_SUFFIX}")
         fi
         
         # 4. Always include GitHub Actions cache
