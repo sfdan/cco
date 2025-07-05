@@ -51,6 +51,46 @@ jobs:
           type=raw,value=latest,enable={{is_default_branch}}
           type=raw,value={{sha}}
 
+    - name: Prepare build cache sources
+      id: cache_sources
+      run: |
+        # Get current commit SHA (short)
+        CURRENT_SHA=$(git rev-parse --short HEAD)
+        
+        # Get previous commit SHA (short)
+        PREV_SHA=$(git rev-parse --short HEAD~1)
+        
+        # Define potential cache sources in order of preference
+        CACHE_SOURCES=()
+        
+        # 1. Try current commit
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA} >/dev/null 2>&1; then
+          echo "Found cache for current commit: ${CURRENT_SHA}"
+          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}")
+        fi
+        
+        # 2. Try previous commit  
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA} >/dev/null 2>&1; then
+          echo "Found cache for previous commit: ${PREV_SHA}"
+          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}")
+        fi
+        
+        # 3. Try latest as fallback
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest >/dev/null 2>&1; then
+          echo "Found cache for latest"
+          CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest")
+        fi
+        
+        # 4. Always include GitHub Actions cache
+        CACHE_SOURCES+=("type=gha")
+        
+        # Convert array to comma-separated string
+        IFS=','
+        CACHE_FROM="${CACHE_SOURCES[*]}"
+        
+        echo "Cache sources: ${CACHE_FROM}"
+        echo "cache_from=${CACHE_FROM}" >> $GITHUB_OUTPUT
+
     - name: Build and push Docker image
       id: build
       uses: docker/build-push-action@v5
@@ -58,7 +98,7 @@ jobs:
         context: .
         platforms: ${{ matrix.platform }}
         labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
+        cache-from: ${{ steps.cache_sources.outputs.cache_from }}
         cache-to: type=gha,mode=max
         outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
         build-args: |
