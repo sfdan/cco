@@ -27,6 +27,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -69,7 +71,7 @@ jobs:
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}")
         fi
         
-        # 2. Try previous commit  
+        # 2. Try previous commit
         if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA} >/dev/null 2>&1; then
           echo "Found cache for previous commit: ${PREV_SHA}"
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}")
