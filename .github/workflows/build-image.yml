@@ -106,6 +106,7 @@ jobs:
         build-args: |
           HOST_UID=1000
           HOST_GID=1000
+          CACHE_BUST=${{ github.run_number }}
 
     - name: Export digest
       if: github.event_name != 'pull_request'
