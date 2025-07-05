@@ -51,6 +51,18 @@ if [ -f "$USER_HOME/.claude.json" ]; then
 	chown "$HOST_UID:$HOST_GID" "$USER_HOME/.claude.json" 2>/dev/null || true
 fi
 
+# Set up timezone if TZ environment variable is provided
+if [ -n "$TZ" ]; then
+	echo "▶ Setting timezone to: $TZ"
+	# Create timezone symlink if timezone file exists
+	if [ -f "/usr/share/zoneinfo/$TZ" ]; then
+		ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
+		echo "$TZ" > /etc/timezone
+	else
+		echo "⚠ Warning: Timezone $TZ not found, using system default"
+	fi
+fi
+
 # Switch to the target user and run the command
 # Build the command string properly, ensuring HOME is set correctly
 cmd=""

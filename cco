@@ -586,6 +586,23 @@ run_container() {
 		docker_args+=("$tty_flag")
 	fi
 
+	# Detect host timezone and set container timezone
+	local host_timezone=""
+	if [[ -f /etc/timezone ]]; then
+		# Linux: Read from /etc/timezone
+		host_timezone=$(cat /etc/timezone)
+	elif [[ -L /etc/localtime ]]; then
+		# Linux/macOS: Extract from /etc/localtime symlink
+		host_timezone=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
+	elif command -v timedatectl &>/dev/null; then
+		# systemd systems: Use timedatectl
+		host_timezone=$(timedatectl show --property=Timezone --value 2>/dev/null)
+	elif [[ -f /etc/localtime ]]; then
+		# Fallback: Try to determine timezone from /etc/localtime
+		# This is more complex and may not always work reliably
+		host_timezone=$(find /usr/share/zoneinfo -type f -exec cmp -s {} /etc/localtime \; -print | head -1 | sed 's|.*/zoneinfo/||')
+	fi
+
 	# Pass through relevant environment variables
 	local env_vars=(
 		"ANTHROPIC_API_KEY"
@@ -597,7 +614,6 @@ run_container() {
 		"COLORTERM"
 		"LANG"
 		"LC_ALL"
-		"TZ"
 		"HTTP_PROXY"
 		"HTTPS_PROXY"
 		"NO_PROXY"
@@ -612,6 +628,15 @@ run_container() {
 			docker_args+=(-e "$var=${!var}")
 		fi
 	done
+
+	# Set timezone in container
+	if [[ -n "$host_timezone" ]]; then
+		log "Setting container timezone to: $host_timezone"
+		docker_args+=(-e "TZ=$host_timezone")
+	elif [[ -n "$TZ" ]]; then
+		# Use TZ environment variable if set
+		docker_args+=(-e "TZ=$TZ")
+	fi
 
 	# Add custom environment variables from command line
 	for custom_env in "${custom_env_vars[@]}"; do
