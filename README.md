@@ -32,6 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash
 ```
 
 ### Usage
+Just type `cco` where you would normally type `claude` and your protection is on!
+
 ```bash
 cco "write a hello world script"
 cco "help me refactor this code"
