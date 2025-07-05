@@ -61,6 +61,79 @@ You should barely notice `cco` is there, except for that reassuring feeling of s
 
 The result? Claude gets the `--dangerously-skip-permissions` experience it needs to be productive, while potential risks are contained within the sandbox.
 
+## Why cco vs alternatives?
+
+There are several alternatives for running Claude Code in containers:
+- [Anthropic's official devcontainer spec](https://docs.anthropic.com/en/docs/claude-code/devcontainer) for VS Code
+- [claudebox by RchGrav](https://github.com/RchGrav/claudebox) - a feature-rich container environment
+- Basic Docker approaches
+
+Here's why cco is the better choice for developers who want simplicity and seamless integration:
+
+### Simplicity and workflow
+- **One command**: `cco "help me code"` - that's it. Devcontainers require VS Code setup, configuration files, and "Reopen in Container"
+- **No IDE dependency**: Works in any terminal, no VS Code required. Devcontainers are VS Code-specific
+- **Instant startup**: Spins up immediately, no container rebuilding. Devcontainers rebuild on configuration changes
+- **Zero configuration**: Install once, works everywhere. Devcontainers need devcontainer.json setup per project
+- **Pass-through arguments**: All Claude Code options work normally (`--resume`, `--model`, etc.) without configuration
+
+### First-class macOS support
+- **Keychain integration**: Automatically extracts Claude Code credentials from macOS Keychain. Devcontainers require manual credential setup
+- **User mapping**: Handles macOS UIDs (501) vs Linux container UIDs automatically. Devcontainers use generic container users
+- **File permissions**: Perfect permission mapping between macOS host and Linux container without configuration
+- **Platform detection**: Smart platform-specific logic. Devcontainers use one-size-fits-all approach
+
+### Terminal responsiveness
+- **Window resizing works properly**: When you resize your terminal, Claude's interface adapts in real-time (via SIGWINCH signal forwarding). Devcontainers don't handle this
+- **Native terminal feel**: Interactive terminal interface works exactly like native Claude Code
+- **Real-time interface updates**: Claude's TUI reflows and adapts when you resize your terminal window
+- **Full signal support**: All terminal signals work properly, not just basic input/output
+
+### Credential security
+- **Zero credential baking**: Credentials never get built into Docker images, unlike some devcontainer setups
+- **Runtime-only mounting**: Secure credential extraction and temporary mounting. Devcontainers often persist credentials in container
+- **Cross-platform auth**: Works with macOS Keychain, Linux files, and environment variables automatically
+- **No manual setup**: Finds and uses credentials without devcontainer configuration
+
+### Development workflow integration  
+- **Project-aware**: Container names based on directory, proper working directory handling. Devcontainers use generic naming
+- **MCP server compatibility**: Host networking enables localhost MCP servers without configuration. Devcontainers may require network setup
+- **Environment inheritance**: Terminal settings, Git config, locale automatically available. Devcontainers need explicit environment configuration
+- **Smart caching**: Uses previous images as build cache for faster rebuilds without configuration
+
+### Feature comparison
+
+| Feature                  | cco                              | claudebox                     | devcontainer              |
+|--------------------------|----------------------------------|-------------------------------|---------------------------|
+| **Setup complexity**     | One command install              | Multi-step setup, profiles    | VS Code + config files    |
+| **IDE dependency**       | None                             | None                          | VS Code required          |
+| **Startup time**         | Instant                          | Slower (profile builds)       | Container rebuild delays  |
+| **macOS Keychain**       | Automatic                        | Manual setup                  | Manual setup              |
+| **Terminal resizing**    | Automatic (SIGWINCH passthrough) | Unknown                       | Limited                   |
+| **Configuration**        | Zero config                      | Profile management            | devcontainer.json         |
+| **Development profiles** | None needed                      | 15+ profiles                  | Basic                     |
+| **Project isolation**    | Basic                            | Advanced (per-project images) | Basic                     |
+| **Philosophy**           | Invisible simplicity             | Feature-rich environment      | IDE integration           |
+
+**Choose devcontainer if you:**
+- Want VS Code integration and IDE features
+- Need team collaboration and shared environments  
+- Require sophisticated firewall rules and network restrictions
+
+**Choose claudebox if you:**
+- Want extensive development profiles (C++, Python, Rust, etc.)
+- Need per-project Docker images and isolation
+- Want comprehensive package management and firewall control
+- Don't mind setup complexity for feature richness
+
+**Choose cco if you:**
+- Live in the terminal and want Claude Code to feel native
+- Want the simplest possible secure Claude setup  
+- Prefer zero configuration over feature customization
+- Value instant startup and seamless macOS integration
+
+`cco` isn't trying to be a development environment - it's trying to be invisible protection that lets you use Claude Code exactly as intended, just safely.
+
 ## Installation
 
 ### One-liner install
