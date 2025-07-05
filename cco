@@ -572,6 +572,7 @@ run_container() {
 
 	local docker_args=(
 		--rm
+		--init
 		--name "$CONTAINER_NAME"
 		--user "root"
 		-e "HOST_UID=${host_uid}"
@@ -771,10 +772,30 @@ run_container() {
 	[[ -f "$HOME/.gitconfig" ]] && docker_args+=(-v "$HOME/.gitconfig":"$container_home/.gitconfig:ro")
 	[[ -d "$HOME/.ssh" ]] && docker_args+=(-v "$HOME/.ssh":"$container_home/.ssh:ro")
 
+	# Function to start background SIGWINCH monitor
+	start_sigwinch_monitor() {
+		local container_name="$1"
+
+		# Background process to monitor and forward SIGWINCH signals to container
+		(
+			# Wait for container to initialize
+			sleep 2
+
+			# Set up signal handler to forward SIGWINCH to container processes
+			trap "docker exec '$container_name' pkill -SIGWINCH -u hostuser 2>/dev/null" WINCH
+
+			# Keep monitor alive while container exists
+			while docker ps --format '{{.Names}}' | grep -q "^$container_name\$" 2>/dev/null; do
+				sleep 2
+			done
+		) &
+	}
+
 	# Run the container (entrypoint will handle user setup)
 	if [[ "$shell_mode" = true ]]; then
 		if [[ ${#claude_args[@]} -eq 0 ]]; then
 			# Interactive shell mode
+			start_sigwinch_monitor "$CONTAINER_NAME"
 			docker run "${docker_args[@]}" "$IMAGE_NAME" bash
 		else
 			# Shell command mode - execute the provided command
@@ -782,8 +803,10 @@ run_container() {
 		fi
 	else
 		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			start_sigwinch_monitor "$CONTAINER_NAME"
 			docker run "${docker_args[@]}" "$IMAGE_NAME"
 		else
+			start_sigwinch_monitor "$CONTAINER_NAME"
 			docker run "${docker_args[@]}" "$IMAGE_NAME" claude --dangerously-skip-permissions "${claude_args[@]}"
 		fi
 	fi
@@ -1112,7 +1135,7 @@ main() {
 	check_dependencies
 	verify_claude_authentication
 
-	# Handle --pull flag first 
+	# Handle --pull flag first
 	if [[ "$pull_image" = true ]]; then
 		log "Pulling latest pre-built image..."
 		if pull_prebuilt_image; then

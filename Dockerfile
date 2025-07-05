@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y curl \
     # Container tools
     docker.io \
     # System administration
-    sudo \
+    sudo procps \
     # Misc utilities
     tree less file unzip zip \
     && rm -rf /var/lib/apt/lists/*
