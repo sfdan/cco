@@ -65,21 +65,21 @@ jobs:
         # Define potential cache sources in order of preference
         CACHE_SOURCES=()
         
-        # 1. Try current commit
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA} >/dev/null 2>&1; then
-          echo "Found cache for current commit: ${CURRENT_SHA}"
+        # 1. Try current commit (platform-specific)
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA} --platform ${{ matrix.platform }} >/dev/null 2>&1; then
+          echo "Found cache for current commit (${CURRENT_SHA}) on ${{ matrix.platform }}"
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${CURRENT_SHA}")
         fi
         
-        # 2. Try previous commit
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA} >/dev/null 2>&1; then
-          echo "Found cache for previous commit: ${PREV_SHA}"
+        # 2. Try previous commit (platform-specific)
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA} --platform ${{ matrix.platform }} >/dev/null 2>&1; then
+          echo "Found cache for previous commit (${PREV_SHA}) on ${{ matrix.platform }}"
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PREV_SHA}")
         fi
         
-        # 3. Try latest as fallback
-        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest >/dev/null 2>&1; then
-          echo "Found cache for latest"
+        # 3. Try latest as fallback (platform-specific)
+        if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --platform ${{ matrix.platform }} >/dev/null 2>&1; then
+          echo "Found cache for latest on ${{ matrix.platform }}"
           CACHE_SOURCES+=("type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest")
         fi
         
