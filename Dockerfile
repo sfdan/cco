@@ -80,6 +80,13 @@ RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Install direnv and related environment management tools
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    direnv \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'eval "$(direnv hook bash)"' >> /etc/bash.bashrc
+
 # Install Claude Code CLI (always fetch latest version)
 ARG CACHE_BUST=default
 RUN echo "Cache bust: ${CACHE_BUST}" && \
