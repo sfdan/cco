@@ -55,7 +55,7 @@ RUN curl -fsSL https://bun.sh/install | bash \
 RUN curl https://mise.run | sh \
     && mv /root/.local/bin/mise /usr/local/bin/mise
 
-# Install shfmt (shell formatter)
+# Install shfmt (shell formatter) - non-blocking, build continues even if this fails
 RUN ARCH=$(case $(uname -m) in \
         x86_64) echo amd64;; \
         aarch64) echo arm64;; \
@@ -63,7 +63,7 @@ RUN ARCH=$(case $(uname -m) in \
         *) echo amd64;; \
     esac) \
     && SHFMT_FALLBACK_VERSION="v3.12.0" \
-    && echo "Fetching latest shfmt version..." \
+    && echo "Attempting to install shfmt..." \
     && SHFMT_VERSION=$(curl -s https://api.github.com/repos/mvdan/sh/releases/latest | jq -r .tag_name 2>/dev/null) \
     && if [ -z "$SHFMT_VERSION" ] || [ "$SHFMT_VERSION" = "null" ]; then \
         echo "Failed to fetch latest version, using fallback: $SHFMT_FALLBACK_VERSION"; \
@@ -74,9 +74,13 @@ RUN ARCH=$(case $(uname -m) in \
     && echo "Downloading shfmt ${SHFMT_VERSION} for architecture: $ARCH" \
     && SHFMT_URL="https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_${ARCH}" \
     && echo "URL: $SHFMT_URL" \
-    && curl -fsSL "$SHFMT_URL" -o /usr/local/bin/shfmt \
-    && chmod +x /usr/local/bin/shfmt \
-    && /usr/local/bin/shfmt --version
+    && if curl -fsSL "$SHFMT_URL" -o /usr/local/bin/shfmt 2>/dev/null; then \
+        chmod +x /usr/local/bin/shfmt \
+        && echo "shfmt installed successfully: $(/usr/local/bin/shfmt --version)" \
+        || echo "shfmt installed but version check failed"; \
+    else \
+        echo "Warning: Failed to download shfmt, continuing without it"; \
+    fi
 
 # Create symlinks for fd (some systems call it fdfind)
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
