@@ -56,8 +56,21 @@ RUN curl https://mise.run | sh \
     && mv /root/.local/bin/mise /usr/local/bin/mise
 
 # Install shfmt (shell formatter)
-RUN ARCH=$(case $(uname -m) in x86_64) echo amd64;; aarch64) echo arm64;; armv7l) echo arm;; *) echo amd64;; esac) \
-    && SHFMT_VERSION=$(curl -s https://api.github.com/repos/mvdan/sh/releases/latest | jq -r .tag_name) \
+RUN ARCH=$(case $(uname -m) in \
+        x86_64) echo amd64;; \
+        aarch64) echo arm64;; \
+        armv7l) echo arm;; \
+        *) echo amd64;; \
+    esac) \
+    && SHFMT_FALLBACK_VERSION="v3.12.0" \
+    && echo "Fetching latest shfmt version..." \
+    && SHFMT_VERSION=$(curl -s https://api.github.com/repos/mvdan/sh/releases/latest | jq -r .tag_name 2>/dev/null) \
+    && if [ -z "$SHFMT_VERSION" ] || [ "$SHFMT_VERSION" = "null" ]; then \
+        echo "Failed to fetch latest version, using fallback: $SHFMT_FALLBACK_VERSION"; \
+        SHFMT_VERSION="$SHFMT_FALLBACK_VERSION"; \
+    else \
+        echo "Using latest version: $SHFMT_VERSION"; \
+    fi \
     && echo "Downloading shfmt ${SHFMT_VERSION} for architecture: $ARCH" \
     && SHFMT_URL="https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_${ARCH}" \
     && echo "URL: $SHFMT_URL" \
