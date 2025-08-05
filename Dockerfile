@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y curl \
     jq ripgrep fzf fd-find bat htop tmux shellcheck \
     # Languages and runtimes
     python3 python3-pip python3-venv \
-    golang-go rustc cargo \
+    golang-go \
     # Database clients (minimal set)
     postgresql-client sqlite3 \
     # Network and system tools
@@ -26,6 +26,16 @@ RUN apt-get update && apt-get install -y curl \
     # Misc utilities
     tree less file unzip zip \
     && rm -rf /var/lib/apt/lists/*
+
+# Set Rust environment variables (before installation for better caching)
+ENV CARGO_HOME=/opt/cargo \
+    RUSTUP_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:$PATH
+
+# Install Rust using rustup (official Rust installer)
+# Using a specific toolchain version for better cache predictability
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+    && chmod -R a+rx /opt/cargo/bin
 
 # Install packages not available in Debian repos
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
