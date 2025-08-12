@@ -1278,7 +1278,9 @@ if [[ "$subcommand_handled" = false ]]; then
 			echo "  - Use --env to set custom variables"
 			echo ""
 			echo "Requirements:"
-			echo "  - Docker installed and running"
+			echo "  - Sandbox backend: ONE of the following:"
+			echo "    • macOS: sandbox-exec (built-in) OR Docker"
+			echo "    • Linux: bubblewrap (bwrap) OR Docker"
 			echo "  - Claude Code authenticated (run \`claude\` and login)"
 			exit 0
 			;;
