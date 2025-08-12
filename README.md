@@ -4,7 +4,7 @@
 <hr>
 
 
-**cco** (Claude Container, or Claude Condom if you're so inclined) provides essential protection while Claude Code is up close and personal with your system. It uses Docker as a barrier to keep Claude contained while keeping your real system safe.
+**cco** (Claude Container, or Claude Condom if you're so inclined) provides essential protection while Claude Code is up close and personal with your system. It automatically selects the best available sandboxing method - using native OS sandboxing (sandbox-exec on macOS, bubblewrap on Linux) when available, or falling back to Docker as a barrier to keep Claude contained while keeping your real system safe.
 
 ## Why protection matters
 
@@ -52,14 +52,19 @@ You should barely notice `cco` is there, except for that reassuring feeling of s
 
 ## How it works
 
-**`cco` runs Claude Code inside a Docker container.** This creates a sandboxed environment where Claude can operate with full autonomy while being isolated from your host system.
+**`cco` runs Claude Code inside a sandboxed environment.** It automatically detects and uses the best available sandboxing method:
 
-- **Docker sandbox**: Claude runs in an isolated container with its own filesystem
-- **Host file access**: Your project files are mounted so Claude can read and edit them
+- **Native sandboxing (default when available)**: Uses OS-native tools (sandbox-exec on macOS, bubblewrap on Linux) for lightweight, fast isolation
+- **Docker sandboxing (fallback)**: Uses Docker containers when native tools aren't available
+
+- **Automatic sandbox selection**: Chooses native OS sandboxing when available, Docker as fallback
+- **Native sandbox (preferred)**: Lightweight, fast startup, direct Keychain access on macOS
+- **Docker sandbox (fallback)**: Full isolation with container filesystem when native tools unavailable
+- **Host file access**: Your project files are accessible so Claude can read and edit them
 - **Network access**: Full host network access for localhost development servers, MCP servers, and web requests
 - **Credential management**: Authentication is handled securely without exposing host credentials
-- **Enhanced features**: Background tasks enabled by default for improved code analysis and autonomous development
-- **Full toolchain**: Container includes development tools, languages, and utilities Claude needs
+- **Enhanced features**: Background tasks enabled by default for improved code analysis and autonomous development (Docker mode)
+- **Full toolchain**: Docker container includes development tools, languages, and utilities Claude needs
 
 The result? Claude gets the `--dangerously-skip-permissions` experience it needs to be productive, while potential risks are contained within the sandbox.
 
@@ -168,7 +173,12 @@ cco --help
 
 ### Advanced options
 ```bash
-# Rebuild the protective layer (also updates to latest Claude Code version)
+# Force a specific sandbox backend
+cco --backend native  # Use native sandbox (sandbox-exec/bubblewrap)
+cco --backend docker  # Use Docker sandbox
+cco --backend auto    # Auto-detect (default)
+
+# Rebuild the protective layer (Docker mode only, also updates to latest Claude Code version)
 cco --rebuild
 
 # System information and status
@@ -266,23 +276,37 @@ cco
 
 ## Requirements
 
-- **Docker**: Must be running
-- **Claude Code**: Must be authenticated
+- **Sandbox backend**: ONE of the following:
+  - **macOS**: sandbox-exec (built-in) OR Docker
+  - **Linux**: bubblewrap (bwrap) OR Docker
+- **Claude Code**: Must be authenticated (run `claude` and login)
 - **Bash**: For the wrapper
 
 ### Authentication
 `cco` automatically finds your Claude credentials:
-- **macOS**: Extracts from Keychain
-- **Linux**: Uses `~/.claude/.credentials.json` or config directory
-- **Environment**: `ANTHROPIC_API_KEY` passed through to container
+- **Native sandbox mode**:
+  - **macOS**: Direct Keychain access via sandbox-exec
+  - **Linux**: Direct file access via bubblewrap
+- **Docker sandbox mode**:
+  - **macOS**: Extracts from Keychain and mounts securely
+  - **Linux**: Mounts `~/.claude/.credentials.json` or config directory
+- **Environment**: `ANTHROPIC_API_KEY` passed through in both modes
 
 ## Architecture
 
-### Container specs
-- Node.js 20 with development tools
-- Modern CLI utilities (jq, ripgrep, fzf)
-- Multiple language support
-- Database clients and network tools
+### Sandbox modes
+
+#### Native sandboxing (default when available)
+- **macOS**: Uses sandbox-exec (Seatbelt) for OS-level isolation
+- **Linux**: Uses bubblewrap for lightweight containerization
+- **Benefits**: Fast startup, no Docker overhead, direct system integration
+
+#### Docker sandboxing (fallback)
+- **Container specs**:
+  - Node.js 20 with development tools
+  - Modern CLI utilities (jq, ripgrep, fzf)
+  - Multiple language support
+  - Database clients and network tools
 
 ### Safety features
 - Isolated environment

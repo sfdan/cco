@@ -684,25 +684,7 @@ run_native_sandbox() {
 		fi
 	fi
 	
-	# Pass through all relevant environment variables
-	export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-	export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}"
-	export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
-	export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
-	export NO_COLOR="${NO_COLOR:-}"
-	export TERM="${TERM:-}"
-	export COLORTERM="${COLORTERM:-}"
-	export LANG="${LANG:-}"
-	export LC_ALL="${LC_ALL:-}"
-	export HTTP_PROXY="${HTTP_PROXY:-}"
-	export HTTPS_PROXY="${HTTPS_PROXY:-}"
-	export NO_PROXY="${NO_PROXY:-}"
-	export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}"
-	export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}"
-	export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-}"
-	export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-}"
-	
-	# Execute in sandbox
+	# Execute in sandbox with full environment
 	exec "${cmd[@]}"
 }
 
@@ -1305,8 +1287,8 @@ if [[ "$subcommand_handled" = false ]]; then
 			echo ""
 			echo "Requirements:"
 			echo "  - Sandbox backend: ONE of the following:"
-			echo "    • macOS: sandbox-exec (built-in) OR Docker"
-			echo "    • Linux: bubblewrap (bwrap) OR Docker"
+			echo "    - macOS: sandbox-exec (built-in) OR Docker"
+			echo "    - Linux: bubblewrap (bwrap) OR Docker"
 			echo "  - Claude Code authenticated (run \`claude\` and login)"
 			exit 0
 			;;
