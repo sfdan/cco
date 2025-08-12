@@ -639,11 +639,8 @@ run_native_sandbox() {
 	write_paths+=("--write" "$current_dir")
 	
 	# Allow read-write access to Claude config directory 
-	# (needed for state files, MCP configs, credentials, etc.)
+	# (needed for state files, MCP configs, etc.)
 	write_paths+=("--write" "$claude_config_dir")
-	
-	# Explicitly allow writes to credentials file location
-	write_paths+=("--write" "$claude_config_dir/.credentials.json")
 	
 	# Allow access to main .claude.json if it exists
 	if [[ -f "$HOME/.claude.json" ]]; then
