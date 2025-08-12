@@ -126,6 +126,13 @@ run_macos() {
 	{
 		echo "(version 1)"
 		echo "(allow default)"
+		# Allow mach operations needed for Keychain access
+		echo "(allow mach-lookup)"
+		echo "(allow mach-register)"
+		# Allow process execution for security command
+		echo "(allow process-exec)"
+		echo "(allow process-fork)"
+		# Deny file writes globally, then whitelist specific paths
 		echo "(deny file-write*)"
 		# Always allow writes under the current directory
 		printf '(allow file-write* (subpath "%s"))\n' "$(policy_quote "$PWD_ABS")"

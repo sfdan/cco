@@ -639,8 +639,11 @@ run_native_sandbox() {
 	write_paths+=("--write" "$current_dir")
 	
 	# Allow read-write access to Claude config directory 
-	# (needed for state files, MCP configs, etc.)
+	# (needed for state files, MCP configs, credentials, etc.)
 	write_paths+=("--write" "$claude_config_dir")
+	
+	# Explicitly allow writes to credentials file location
+	write_paths+=("--write" "$claude_config_dir/.credentials.json")
 	
 	# Allow access to main .claude.json if it exists
 	if [[ -f "$HOME/.claude.json" ]]; then
@@ -655,40 +658,11 @@ run_native_sandbox() {
 	# Allow writes to temp directory for credential syncing
 	write_paths+=("--write" "/tmp")
 	
-	# Handle credentials for macOS (Keychain integration)
-	local temp_creds_dir=""
-	local original_creds_content=""
-	local startup_system_creds_content=""
+	# On macOS, Claude needs to access the Keychain directly
+	# The sandbox-exec Seatbelt profile already allows default system operations
+	# including Keychain access, so we don't need to pre-extract credentials
 	
-	if command -v security &>/dev/null; then
-		# macOS: Extract credentials from Keychain and make available
-		temp_creds_dir=$(mktemp -d)
-		trap 'rm -rf "$temp_creds_dir"' EXIT
-		
-		local keychain_creds
-		keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
-		if [[ -n "$keychain_creds" ]]; then
-			echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
-			chmod 600 "$temp_creds_dir/.credentials.json"
-			
-			# Store original content for sync-back detection if --allow-oauth-refresh enabled
-			if [[ "$allow_oauth_refresh" = true ]]; then
-				original_creds_content="$keychain_creds"
-				startup_system_creds_content="$keychain_creds"
-				
-				# Set up sync-back on exit
-				trap 'sync_credentials_back "$temp_creds_dir" "$original_creds_content" "" "$startup_system_creds_content" && rm -rf "$temp_creds_dir"' EXIT
-			fi
-			
-			# Copy credentials to Claude config directory for native sandbox
-			cp "$temp_creds_dir/.credentials.json" "$claude_config_dir/.credentials.json"
-			log "Extracted credentials from macOS Keychain"
-		fi
-	elif [[ ! -f "$claude_config_dir/.credentials.json" ]]; then
-		error "No Claude Code credentials found!"
-		error "Please run \`claude\` and login to authenticate, then try again."
-		exit 1
-	fi
+	# On Linux with bubblewrap, credentials are in files so no special handling needed
 	
 	# Build the command
 	local cmd=("$sandbox_script" "${write_paths[@]}" "--")
