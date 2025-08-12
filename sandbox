@@ -126,17 +126,15 @@ run_macos() {
 	{
 		echo "(version 1)"
 		echo "(allow default)"
-		# Allow mach operations needed for Keychain access
-		echo "(allow mach-lookup)"
-		echo "(allow mach-register)"
-		# Allow process execution for security command
-		echo "(allow process-exec)"
-		echo "(allow process-fork)"
-		# Deny file writes globally, then whitelist specific paths
+		
+		# Deny ALL file writes first
 		echo "(deny file-write*)"
-		# Always allow writes under the current directory
+		
+		# Then allow only specific paths we need
+		# 1. Current working directory
 		printf '(allow file-write* (subpath "%s"))\n' "$(policy_quote "$PWD_ABS")"
-		# Additional write holes
+		
+		# 2. Additional paths passed via -w flags
 		for ap in "${write_paths[@]}"; do
 			if [[ -d "$ap" ]]; then
 				printf '(allow file-write* (subpath "%s"))\n' "$(policy_quote "$ap")"
@@ -144,6 +142,29 @@ run_macos() {
 				printf '(allow file-write* (literal "%s"))\n' "$(policy_quote "$ap")"
 			fi
 		done
+		
+		# 3. Temp directories (needed for Keychain and other operations)
+		echo "(allow file-write* (subpath \"/tmp\"))"
+		echo "(allow file-write* (subpath \"/var/tmp\"))"
+		echo "(allow file-write* (subpath \"/var/folders\"))"
+		echo "(allow file-write* (subpath \"/private/var/folders\"))"
+		echo "(allow file-write* (subpath \"/private/tmp\"))"
+		
+		# 4. Common device files and pipes
+		echo "(allow file-write* (literal \"/dev/null\"))"
+		echo "(allow file-write* (literal \"/dev/zero\"))"
+		echo "(allow file-write* (literal \"/dev/random\"))"
+		echo "(allow file-write* (literal \"/dev/urandom\"))"
+		echo "(allow file-write* (literal \"/dev/tty\"))"
+		echo "(allow file-write* (literal \"/dev/stdin\"))"
+		echo "(allow file-write* (literal \"/dev/stdout\"))"
+		echo "(allow file-write* (literal \"/dev/stderr\"))"
+		echo "(allow file-write* (literal \"/dev/fd\"))"
+		
+		# 5. User's Library folders that apps commonly need
+		printf '(allow file-write* (subpath "%s/Library/Caches"))\n' "$(policy_quote "$HOME")"
+		printf '(allow file-write* (subpath "%s/Library/Logs"))\n' "$(policy_quote "$HOME")"
+		printf '(allow file-write* (subpath "%s/Library/Application Support"))\n' "$(policy_quote "$HOME")"
 	} >"$policy_file"
 
 	exec sandbox-exec -f "$policy_file" "$@"

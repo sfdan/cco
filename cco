@@ -642,10 +642,12 @@ run_native_sandbox() {
 	# (needed for state files, MCP configs, etc.)
 	write_paths+=("--write" "$claude_config_dir")
 	
-	# Allow access to main .claude.json if it exists
-	if [[ -f "$HOME/.claude.json" ]]; then
-		write_paths+=("--write" "$HOME/.claude.json")
+	# Allow access to main .claude.json (Claude needs to write to this)
+	# Create it if it doesn't exist so the sandbox can whitelist it
+	if [[ ! -f "$HOME/.claude.json" ]]; then
+		echo "{}" > "$HOME/.claude.json"
 	fi
+	write_paths+=("--write" "$HOME/.claude.json")
 	
 	# Allow writes to project-specific .claude directory
 	if [[ -d "$project_claude_dir" ]]; then
@@ -674,8 +676,9 @@ run_native_sandbox() {
 			cmd+=("bash" "-c" "${claude_args[*]}")
 		fi
 	else
+		# Always use --dangerously-skip-permissions since we're in a sandbox
 		if [[ ${#claude_args[@]} -eq 0 ]]; then
-			cmd+=("claude")
+			cmd+=("claude" "--dangerously-skip-permissions")
 		else
 			cmd+=("claude" "--dangerously-skip-permissions" "${claude_args[@]}")
 		fi
