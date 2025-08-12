@@ -3,7 +3,11 @@
 set -e
 
 # cco - Claude Container (or Claude Condom if you're so inclined)
-# A secure, minimal way to run Claude Code in a Docker container
+# A thin protective layer for Claude Code
+# Supports multiple sandboxing backends: native (bubblewrap/seatbelt) or Docker
+
+# Sandbox backend preference
+SANDBOX_BACKEND="" # auto, native, docker
 
 # Determine if we're running from installation or development
 if [[ -f "./Dockerfile" && -f "./cco" ]]; then
@@ -42,8 +46,62 @@ error() {
 	echo -e "${RED}✗${NC} $1" >&2
 }
 
-# Check if Docker is available
-check_dependencies() {
+# Detect available sandbox backends
+detect_sandbox_backend() {
+	local force_backend="$1"
+	
+	if [[ -n "$force_backend" ]]; then
+		case "$force_backend" in
+			native|docker)
+				SANDBOX_BACKEND="$force_backend"
+				return
+				;;
+			auto|"")
+				# Continue with auto-detection
+				;;
+			*)
+				error "Invalid sandbox backend: $force_backend"
+				error "Valid options: auto, native, docker"
+				exit 1
+				;;
+		esac
+	fi
+	
+	# Auto-detect best available backend
+	local os="$(uname -s)"
+	
+	if [[ "$os" == "Darwin" ]]; then
+		# macOS: Check for sandbox-exec (Seatbelt)
+		if command -v sandbox-exec &>/dev/null; then
+			SANDBOX_BACKEND="native"
+			log "Using native sandbox (Seatbelt)"
+		elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+			SANDBOX_BACKEND="docker"
+			log "Using Docker sandbox (Seatbelt not available)"
+		else
+			error "No sandbox backend available. Install Docker or ensure sandbox-exec is available."
+			exit 1
+		fi
+	elif [[ "$os" == "Linux" ]]; then
+		# Linux: Check for bubblewrap
+		if command -v bwrap &>/dev/null; then
+			SANDBOX_BACKEND="native"
+			log "Using native sandbox (bubblewrap)"
+		elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+			SANDBOX_BACKEND="docker"
+			log "Using Docker sandbox (bubblewrap not available)"
+		else
+			error "No sandbox backend available. Install bubblewrap or Docker."
+			exit 1
+		fi
+	else
+		error "Unsupported OS: $os"
+		exit 1
+	fi
+}
+
+# Check if Docker is available (only when using Docker backend)
+check_docker_dependencies() {
 	# Check for Docker
 	if ! command -v docker &>/dev/null; then
 		error "Docker is not installed or not in PATH"
@@ -56,7 +114,10 @@ check_dependencies() {
 		error "Please start Docker and try again"
 		exit 1
 	fi
+}
 
+# Check general dependencies
+check_dependencies() {
 	# Check for git (required for version detection and updates)
 	if ! command -v git &>/dev/null; then
 		error "Git is not installed or not in PATH"
@@ -551,7 +612,75 @@ show_info() {
 	fi
 }
 
-# Main run function
+# Run with native sandbox backend
+run_native_sandbox() {
+	local claude_config_dir
+	claude_config_dir=$(find_claude_config_dir)
+	local current_dir="$PWD"
+	
+	log "Starting cco with native sandbox..."
+	
+	# Check if sandbox script exists
+	local sandbox_script="$CCO_INSTALLATION_DIR/sandbox"
+	if [[ ! -x "$sandbox_script" ]]; then
+		error "Sandbox script not found or not executable: $sandbox_script"
+		error "Falling back to Docker backend"
+		SANDBOX_BACKEND="docker"
+		check_docker_dependencies
+		run_container
+		return
+	fi
+	
+	# Prepare write paths for sandbox
+	local write_paths=()
+	
+	# Allow writes to current project directory
+	write_paths+=("--write" "$current_dir")
+	
+	# Allow writes to Claude config directory for OAuth refresh if enabled
+	if [[ "$allow_oauth_refresh" = true ]]; then
+		write_paths+=("--write" "$claude_config_dir")
+	fi
+	
+	# Allow writes to project-specific .claude directory
+	if [[ -d "$current_dir/.claude" ]]; then
+		write_paths+=("--write" "$current_dir/.claude")
+	fi
+	
+	# Allow writes to temp directory for credential syncing
+	write_paths+=("--write" "/tmp")
+	
+	# Build the command
+	local cmd=("$sandbox_script" "${write_paths[@]}" "--")
+	
+	# Add claude command
+	if [[ "$shell_mode" = true ]]; then
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			# Interactive shell mode
+			cmd+=("bash")
+		else
+			# Shell command mode
+			cmd+=("bash" "-c" "${claude_args[*]}")
+		fi
+	else
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			cmd+=("claude")
+		else
+			cmd+=("claude" "--dangerously-skip-permissions" "${claude_args[@]}")
+		fi
+	fi
+	
+	# Set environment variables for native sandbox
+	export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+	export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}"
+	export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
+	export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
+	
+	# Execute in sandbox
+	exec "${cmd[@]}"
+}
+
+# Main run function (Docker backend)
 run_container() {
 	local host_uid
 	host_uid=$(id -u)
@@ -1047,6 +1176,14 @@ enable_background_tasks=false
 if [[ "$subcommand_handled" = false ]]; then
 	while [[ $# -gt 0 ]]; do
 		case $1 in
+		--backend)
+			if [[ $# -lt 2 ]]; then
+				error "--backend requires an argument (auto, native, docker)"
+				exit 1
+			fi
+			SANDBOX_BACKEND="$2"
+			shift 2
+			;;
 		--rebuild)
 			rebuild_image=true
 			shift
@@ -1110,6 +1247,7 @@ if [[ "$subcommand_handled" = false ]]; then
 			echo "  --version, -v     Show version information"
 			echo "  --env, -e KEY=VAL Set environment variable in container"
 			echo "  --packages, -p    Install additional apt packages into container"
+			echo "  --backend TYPE    Force specific sandbox backend (auto, native, docker)"
 			echo "  --docker          Enable Docker access (bind mount Docker socket)"
 			echo "  --allow-oauth-refresh (EXPERIMENTAL)"
 			echo "                    Allow OAuth token refresh with automatic sync-back"
@@ -1157,7 +1295,15 @@ fi
 main() {
 	log "Starting cco..."
 
+	# Detect sandbox backend
+	detect_sandbox_backend "$SANDBOX_BACKEND"
+	
+	# Check dependencies based on backend
 	check_dependencies
+	if [[ "$SANDBOX_BACKEND" == "docker" ]]; then
+		check_docker_dependencies
+	fi
+	
 	verify_claude_authentication
 
 	# Handle --pull flag first
@@ -1170,37 +1316,45 @@ main() {
 		fi
 	fi
 
-	# Determine whether to pull pre-built image or build locally
-	if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-		# No local image exists
-		if should_use_prebuilt_image; then
-			# Try to pull pre-built image, fallback to build
-			if ! pull_prebuilt_image; then
+	# Only handle Docker image operations if using Docker backend
+	if [[ "$SANDBOX_BACKEND" == "docker" ]]; then
+		# Determine whether to pull pre-built image or build locally
+		if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+			# No local image exists
+			if should_use_prebuilt_image; then
+				# Try to pull pre-built image, fallback to build
+				if ! pull_prebuilt_image; then
+					build_image
+				fi
+			else
+				# Build locally due to customizations
+				if [[ "$rebuild_image" = true ]]; then
+					log "Rebuilding cco image..."
+				elif [[ ${#custom_packages[@]} -gt 0 ]]; then
+					log "Custom packages specified, building image..."
+				fi
 				build_image
 			fi
-		else
-			# Build locally due to customizations
-			if [[ "$rebuild_image" = true ]]; then
+		elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
+			# Force rebuild requested or customizations specified
+			if [[ ${#custom_packages[@]} -gt 0 ]]; then
+				log "Custom packages specified, rebuilding image..."
+			else
 				log "Rebuilding cco image..."
-			elif [[ ${#custom_packages[@]} -gt 0 ]]; then
-				log "Custom packages specified, building image..."
 			fi
+			docker image rm "$IMAGE_NAME" &>/dev/null || true
 			build_image
-		fi
-	elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
-		# Force rebuild requested or customizations specified
-		if [[ ${#custom_packages[@]} -gt 0 ]]; then
-			log "Custom packages specified, rebuilding image..."
 		else
-			log "Rebuilding cco image..."
+			log "Using existing cco image"
 		fi
-		docker image rm "$IMAGE_NAME" &>/dev/null || true
-		build_image
-	else
-		log "Using existing cco image"
 	fi
 
-	run_container
+	# Run with appropriate backend
+	if [[ "$SANDBOX_BACKEND" == "native" ]]; then
+		run_native_sandbox
+	else
+		run_container
+	fi
 }
 
 main
