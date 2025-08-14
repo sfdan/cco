@@ -1252,15 +1252,16 @@ if [[ "$subcommand_handled" = false ]]; then
 			enable_background_tasks=true
 			shift
 			;;
-		--add-dir)
+		--add-dir | --add-dir=*)
 			# Parse --add-dir arguments and collect directories
-			# Keep the flag in claude_args for Claude to process
-			claude_args+=("$1")
-			shift
-			# Collect all directories until we hit another flag or run out of arguments
-			while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
-				# Resolve to absolute path for mounting
-				dir_path="$1"
+			# Supports both --add-dir <dir> and --add-dir=<dir> notations
+			
+			# Check if it's the equals notation
+			if [[ "$1" == *"="* ]]; then
+				# --add-dir=<dir> notation
+				claude_args+=("$1")
+				# Extract the directory after the equals sign
+				dir_path="${1#*=}"
 				if [[ ! -d "$dir_path" ]]; then
 					warn "Directory does not exist: $dir_path"
 				else
@@ -1268,9 +1269,26 @@ if [[ "$subcommand_handled" = false ]]; then
 					dir_path=$(cd "$dir_path" && pwd)
 					additional_dirs+=("$dir_path")
 				fi
+				shift
+			else
+				# --add-dir <dir> notation (space-separated)
 				claude_args+=("$1")
 				shift
-			done
+				# Collect all directories until we hit another flag or run out of arguments
+				while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
+					# Resolve to absolute path for mounting
+					dir_path="$1"
+					if [[ ! -d "$dir_path" ]]; then
+						warn "Directory does not exist: $dir_path"
+					else
+						# Convert to absolute path
+						dir_path=$(cd "$dir_path" && pwd)
+						additional_dirs+=("$dir_path")
+					fi
+					claude_args+=("$1")
+					shift
+				done
+			fi
 			;;
 		--help | -h)
 			echo "cco - Claude Container (or Claude Condom if you're so inclined)"
