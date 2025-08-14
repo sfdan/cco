@@ -674,6 +674,15 @@ run_native_sandbox() {
 	# Build the command
 	local cmd=("$sandbox_script" "${write_paths[@]}" "--")
 	
+	# Debug: Show the full sandbox command being executed
+	if [[ "${CCO_DEBUG:-}" == "1" ]]; then
+		log "DEBUG: Sandbox command: ${cmd[@]}"
+		log "DEBUG: Write paths:"
+		for wp in "${write_paths[@]}"; do
+			log "  $wp"
+		done
+	fi
+	
 	# Add claude command
 	if [[ "$shell_mode" = true ]]; then
 		if [[ ${#claude_args[@]} -eq 0 ]]; then
@@ -1122,9 +1131,121 @@ restore_credentials() {
 	fi
 }
 
-# Handle subcommands first
-subcommand_handled=false
-if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+# Initialize variables
+claude_args=()
+additional_dirs=()
+custom_env_vars=()
+custom_packages=()
+docker_access=false
+allow_oauth_refresh=false
+enable_background_tasks=false
+rebuild_image=false
+pull_image=false
+shell_mode=false
+
+# First pass: Extract cco-specific flags and collect remaining args
+# This ensures --add-dir and other cco flags are parsed before subcommands
+remaining_args=()
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--backend)
+		if [[ $# -lt 2 ]]; then
+			error "--backend requires an argument (auto, native, docker)"
+			exit 1
+		fi
+		SANDBOX_BACKEND="$2"
+		shift 2
+		;;
+	--rebuild)
+		rebuild_image=true
+		shift
+		;;
+	--pull)
+		pull_image=true
+		shift
+		;;
+	--docker)
+		docker_access=true
+		shift
+		;;
+	--allow-oauth-refresh)
+		allow_oauth_refresh=true
+		shift
+		;;
+	--enable-background-tasks)
+		enable_background_tasks=true
+		shift
+		;;
+	--env | -e)
+		if [[ $# -lt 2 ]]; then
+			error "--env requires an argument (KEY=VALUE or KEY)"
+			exit 1
+		fi
+		custom_env_vars+=("$2")
+		shift 2
+		;;
+	--packages | -p)
+		if [[ $# -lt 2 ]]; then
+			error "--packages requires an argument (package1,package2,...)"
+			exit 1
+		fi
+		IFS=',' read -ra ADDR <<<"$2"
+		for pkg in "${ADDR[@]}"; do
+			custom_packages+=("$pkg")
+		done
+		shift 2
+		;;
+	--add-dir | --add-dir=*)
+		# Handle --add-dir for both notations
+		if [[ "$1" == *"="* ]]; then
+			# --add-dir=<dir> notation
+			remaining_args+=("$1")  # Keep for Claude
+			dir_path="${1#*=}"
+			if [[ ! -d "$dir_path" ]]; then
+				warn "Directory does not exist: $dir_path"
+			else
+				dir_path=$(cd "$dir_path" && pwd)
+				additional_dirs+=("$dir_path")
+			fi
+			shift
+		else
+			# --add-dir <dir> notation
+			remaining_args+=("$1")  # Keep for Claude
+			shift
+			# Collect directories until next flag or known subcommand
+			while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
+				# Stop if we hit a known subcommand
+				case "$1" in
+					shell|self-update|cleanup|info|backup-creds|restore-creds|pull|rebuild)
+						# This is a subcommand, not a directory
+						break
+						;;
+					*)
+						dir_path="$1"
+						remaining_args+=("$1")  # Keep for Claude
+						if [[ ! -d "$dir_path" ]]; then
+							warn "Directory does not exist: $dir_path"
+						else
+							dir_path=$(cd "$dir_path" && pwd)
+							additional_dirs+=("$dir_path")
+						fi
+						shift
+						;;
+				esac
+			done
+		fi
+		;;
+	*)
+		# Not a cco flag, keep for subcommand/Claude processing
+		remaining_args+=("$1")
+		shift
+		;;
+	esac
+done
+
+# Now handle subcommands with remaining args
+set -- "${remaining_args[@]}"
+if [[ $# -gt 0 ]]; then
 	case $1 in
 	self-update)
 		update_cco
@@ -1135,7 +1256,6 @@ if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		shift
 		# All remaining arguments are shell command arguments
 		claude_args=("$@")
-		subcommand_handled=true
 		;;
 	cleanup)
 		log "Cleaning up cco containers..."
@@ -1178,186 +1298,79 @@ if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		log "Rebuild completed successfully"
 		exit 0
 		;;
+	--version | -v)
+		show_version
+		exit 0
+		;;
+	--help | -h)
+		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
+		echo "A thin protective layer for Claude Code"
+		echo ""
+		echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
+		echo ""
+		echo "Commands:"
+		echo "  self-update       Update cco to latest version"
+		echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
+		echo "  cleanup           Remove all cco containers"
+		echo "  info              Show system information and readiness status"
+		echo "  pull              Pull latest pre-built image from registry"
+		echo "  rebuild           Rebuild Docker image from source"
+		echo ""
+		echo "Options:"
+		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
+		echo "  --pull            Pull latest pre-built image before starting container"
+		echo "  --version, -v     Show version information"
+		echo "  --env, -e KEY=VAL Set environment variable in container"
+		echo "  --packages, -p    Install additional apt packages into container"
+		echo "  --backend TYPE    Force specific sandbox backend (auto, native, docker)"
+		echo "  --docker          Enable Docker access (bind mount Docker socket)"
+		echo "  --allow-oauth-refresh (EXPERIMENTAL)"
+		echo "                    Allow OAuth token refresh with automatic sync-back"
+		echo "                    Permits Claude to refresh expired tokens and syncs them back"
+		echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
+		echo "                    Creates timestamped backups and uses clondom protection"
+		echo "  --enable-background-tasks"
+		echo "                    Enable Claude Code background tasks (disabled by default)"
+		echo "                    Background tasks provide enhanced functionality like"
+		echo "                    improved code analysis and autonomous development features"
+		echo "  --help, -h        Show this help message"
+		echo ""
+		echo "Claude Code Options (passed through):"
+		echo "  --add-dir <directories...>  Additional directories to allow tool access to"
+		echo ""
+		echo "All other arguments are passed to Claude Code inside the container."
+		echo "This means all Claude Code options (--resume, --model, etc.) work normally."
+		echo ""
+		echo "Experimental Commands:"
+		echo "  backup-creds      Create a backup of current Claude Code credentials"
+		echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
+		echo "                    or specify backup file path to restore specific backup"
+		echo ""
+		echo "Safety Recommendation:"
+		echo "  Before using --allow-oauth-refresh for the first time, run:"
+		echo "    cco backup-creds"
+		echo ""
+		echo "Environment Variables:"
+		echo "  - Automatically loads .env file if present"
+		echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
+		echo "  - Use --env to set custom variables"
+		echo ""
+		echo "Requirements:"
+		echo "  - Sandbox backend: ONE of the following:"
+		echo "    - macOS: sandbox-exec (built-in) OR Docker"
+		echo "    - Linux: bubblewrap (bwrap) OR Docker"
+		echo "  - Claude Code authenticated (run \`claude\` and login)"
+		exit 0
+		;;
 	*)
-		# Not a subcommand, continue with flag processing
+		# Not a subcommand, pass to Claude
+		claude_args=("$@")
 		;;
 	esac
 fi
 
-# Handle command line arguments
-rebuild_image=false
-pull_image=false
-if [[ "$subcommand_handled" = false ]]; then
-	claude_args=()
-	shell_mode=false
-fi
-additional_dirs=()
-custom_env_vars=()
-custom_packages=()
-docker_access=false
-allow_oauth_refresh=false
-enable_background_tasks=false
-
-if [[ "$subcommand_handled" = false ]]; then
-	while [[ $# -gt 0 ]]; do
-		case $1 in
-		--backend)
-			if [[ $# -lt 2 ]]; then
-				error "--backend requires an argument (auto, native, docker)"
-				exit 1
-			fi
-			SANDBOX_BACKEND="$2"
-			shift 2
-			;;
-		--rebuild)
-			rebuild_image=true
-			shift
-			;;
-		--pull)
-			pull_image=true
-			shift
-			;;
-		--version | -v)
-			show_version
-			exit 0
-			;;
-		--env | -e)
-			if [[ $# -lt 2 ]]; then
-				error "--env requires an argument (KEY=VALUE or KEY)"
-				exit 1
-			fi
-			custom_env_vars+=("$2")
-			shift 2
-			;;
-		--packages | -p)
-			if [[ $# -lt 2 ]]; then
-				error "--packages requires an argument (package1,package2,...)"
-				exit 1
-			fi
-			IFS=',' read -ra ADDR <<<"$2"
-			for pkg in "${ADDR[@]}"; do
-				custom_packages+=("$pkg")
-			done
-			shift 2
-			;;
-		--docker)
-			docker_access=true
-			shift
-			;;
-		--allow-oauth-refresh)
-			allow_oauth_refresh=true
-			shift
-			;;
-		--enable-background-tasks)
-			enable_background_tasks=true
-			shift
-			;;
-		--add-dir | --add-dir=*)
-			# Parse --add-dir arguments and collect directories
-			# Supports both --add-dir <dir> and --add-dir=<dir> notations
-			
-			# Check if it's the equals notation
-			if [[ "$1" == *"="* ]]; then
-				# --add-dir=<dir> notation
-				claude_args+=("$1")
-				# Extract the directory after the equals sign
-				dir_path="${1#*=}"
-				if [[ ! -d "$dir_path" ]]; then
-					warn "Directory does not exist: $dir_path"
-				else
-					# Convert to absolute path
-					dir_path=$(cd "$dir_path" && pwd)
-					additional_dirs+=("$dir_path")
-				fi
-				shift
-			else
-				# --add-dir <dir> notation (space-separated)
-				claude_args+=("$1")
-				shift
-				# Collect all directories until we hit another flag or run out of arguments
-				while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
-					# Resolve to absolute path for mounting
-					dir_path="$1"
-					if [[ ! -d "$dir_path" ]]; then
-						warn "Directory does not exist: $dir_path"
-					else
-						# Convert to absolute path
-						dir_path=$(cd "$dir_path" && pwd)
-						additional_dirs+=("$dir_path")
-					fi
-					claude_args+=("$1")
-					shift
-				done
-			fi
-			;;
-		--help | -h)
-			echo "cco - Claude Container (or Claude Condom if you're so inclined)"
-			echo "A thin protective layer for Claude Code"
-			echo ""
-			echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
-			echo ""
-			echo "Commands:"
-			echo "  self-update       Update cco to latest version"
-			echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
-			echo "  cleanup           Remove all cco containers"
-			echo "  info              Show system information and readiness status"
-			echo "  pull              Pull latest pre-built image from registry"
-			echo "  rebuild           Rebuild Docker image from source"
-			echo ""
-			echo "Options:"
-			echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
-			echo "  --pull            Pull latest pre-built image before starting container"
-			echo "  --version, -v     Show version information"
-			echo "  --env, -e KEY=VAL Set environment variable in container"
-			echo "  --packages, -p    Install additional apt packages into container"
-			echo "  --backend TYPE    Force specific sandbox backend (auto, native, docker)"
-			echo "  --docker          Enable Docker access (bind mount Docker socket)"
-			echo "  --allow-oauth-refresh (EXPERIMENTAL)"
-			echo "                    Allow OAuth token refresh with automatic sync-back"
-			echo "                    Permits Claude to refresh expired tokens and syncs them back"
-			echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
-			echo "                    Creates timestamped backups and uses clondom protection"
-			echo "  --enable-background-tasks"
-			echo "                    Enable Claude Code background tasks (disabled by default)"
-			echo "                    Background tasks provide enhanced functionality like"
-			echo "                    improved code analysis and autonomous development features"
-			echo "  --help, -h        Show this help message"
-			echo ""
-			echo "Claude Code Options (passed through):"
-			echo "  --add-dir <directories...>  Additional directories to allow tool access to"
-			echo ""
-			echo "All other arguments are passed to Claude Code inside the container."
-			echo "This means all Claude Code options (--resume, --model, etc.) work normally."
-			echo ""
-			echo "Experimental Commands:"
-			echo "  backup-creds      Create a backup of current Claude Code credentials"
-			echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
-			echo "                    or specify backup file path to restore specific backup"
-			echo ""
-			echo "Safety Recommendation:"
-			echo "  Before using --allow-oauth-refresh for the first time, run:"
-			echo "    cco backup-creds"
-			echo ""
-			echo "Environment Variables:"
-			echo "  - Automatically loads .env file if present"
-			echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
-			echo "  - Use --env to set custom variables"
-			echo ""
-			echo "Requirements:"
-			echo "  - Sandbox backend: ONE of the following:"
-			echo "    - macOS: sandbox-exec (built-in) OR Docker"
-			echo "    - Linux: bubblewrap (bwrap) OR Docker"
-			echo "  - Claude Code authenticated (run \`claude\` and login)"
-			exit 0
-			;;
-		*)
-			# Pass all other arguments to Claude
-			claude_args+=("$1")
-			shift
-			;;
-		esac
-	done
-fi
+# The main argument parsing loop has been moved to before subcommand handling
+# to ensure cco flags like --add-dir are parsed first
 
 # Main execution flow
 main() {

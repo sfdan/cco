@@ -121,7 +121,18 @@ run_macos() {
 	# - Any -w directories (subpath)
 	# - Any -w files (literal)
 	policy_file="$(mktemp -t sandbox.seatbelt.XXXXXX)"
-	trap 'rm -f "$policy_file"' EXIT
+	
+	# Debug mode: Keep policy file for inspection
+	if [[ "${CCO_DEBUG:-}" == "1" ]]; then
+		echo "DEBUG: Seatbelt policy file: $policy_file" >&2
+		echo "DEBUG: Write paths being added:" >&2
+		printf "  PWD: %s\n" "$PWD_ABS" >&2
+		for ap in "${write_paths[@]}"; do
+			printf "  Additional: %s\n" "$ap" >&2
+		done
+	else
+		trap 'rm -f "$policy_file"' EXIT
+	fi
 
 	{
 		echo "(version 1)"
