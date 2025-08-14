@@ -638,6 +638,14 @@ run_native_sandbox() {
 	# Always allow writes to current project directory
 	write_paths+=("--write" "$current_dir")
 	
+	# Add any additional directories specified with --add-dir
+	for dir in "${additional_dirs[@]}"; do
+		if [[ -d "$dir" ]]; then
+			write_paths+=("--write" "$dir")
+			log "Adding additional directory: $dir"
+		fi
+	done
+	
 	# Allow read-write access to Claude config directory 
 	# (needed for state files, MCP configs, etc.)
 	write_paths+=("--write" "$claude_config_dir")
@@ -717,6 +725,14 @@ run_container() {
 		-v "$current_dir":"$current_dir"
 		-w "$current_dir"
 	)
+	
+	# Mount any additional directories specified with --add-dir
+	for dir in "${additional_dirs[@]}"; do
+		if [[ -d "$dir" ]]; then
+			docker_args+=(-v "$dir":"$dir")
+			log "Mounting additional directory: $dir"
+		fi
+	done
 
 	# Add TTY flags if available
 	if [[ -n "$tty_flag" ]]; then
@@ -1175,6 +1191,7 @@ if [[ "$subcommand_handled" = false ]]; then
 	claude_args=()
 	shell_mode=false
 fi
+additional_dirs=()
 custom_env_vars=()
 custom_packages=()
 docker_access=false
@@ -1235,6 +1252,26 @@ if [[ "$subcommand_handled" = false ]]; then
 			enable_background_tasks=true
 			shift
 			;;
+		--add-dir)
+			# Parse --add-dir arguments and collect directories
+			# Keep the flag in claude_args for Claude to process
+			claude_args+=("$1")
+			shift
+			# Collect all directories until we hit another flag or run out of arguments
+			while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
+				# Resolve to absolute path for mounting
+				dir_path="$1"
+				if [[ ! -d "$dir_path" ]]; then
+					warn "Directory does not exist: $dir_path"
+				else
+					# Convert to absolute path
+					dir_path=$(cd "$dir_path" && pwd)
+					additional_dirs+=("$dir_path")
+				fi
+				claude_args+=("$1")
+				shift
+			done
+			;;
 		--help | -h)
 			echo "cco - Claude Container (or Claude Condom if you're so inclined)"
 			echo "A thin protective layer for Claude Code"
@@ -1267,6 +1304,9 @@ if [[ "$subcommand_handled" = false ]]; then
 			echo "                    Background tasks provide enhanced functionality like"
 			echo "                    improved code analysis and autonomous development features"
 			echo "  --help, -h        Show this help message"
+			echo ""
+			echo "Claude Code Options (passed through):"
+			echo "  --add-dir <directories...>  Additional directories to allow tool access to"
 			echo ""
 			echo "All other arguments are passed to Claude Code inside the container."
 			echo "This means all Claude Code options (--resume, --model, etc.) work normally."
