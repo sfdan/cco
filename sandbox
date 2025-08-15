@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# sandbox - RW only in the current directory; RO everywhere else.
+# Works on Linux (bubblewrap) and macOS (Seatbelt via sandbox-exec).
+# Add extra write holes with -w/--write PATH (repeatable). PATH may be a dir or file.
+# Env vars are inherited; networking is untouched.
+
+set -euo pipefail
+
+usage() {
+	echo "Usage: sandbox [-w|--write PATH]... <command> [args...]"
+	echo "  PATH may be a directory (RW under it) or a file (RW to that file only)."
+	exit 1
+}
+
+# Expand ~ and return absolute, symlink-free path (for dirs or files).
+# For non-existent files, ensure parent exists and return absolute would-be path.
+abs_path() {
+	local p="$1"
+	# manual tilde expansion (covers the case where user quoted it)
+	if [[ "$p" == "~" || "$p" == ~/* ]]; then
+		p="${p/#\~/$HOME}"
+	fi
+	if [[ -e "$p" ]]; then
+		if [[ -d "$p" ]]; then
+			(cd "$p" && pwd -P)
+		else
+			(cd "$(dirname -- "$p")" && printf '%s/%s\n' "$(pwd -P)" "$(basename -- "$p")")
+		fi
+	else
+		local parent base
+		parent="$(dirname -- "$p")"
+		base="$(basename -- "$p")"
+		[[ -d "$parent" ]] || {
+			echo "sandbox: parent directory does not exist: $parent" >&2
+			exit 2
+		}
+		(cd "$parent" && printf '%s/%s\n' "$(pwd -P)" "$base")
+	fi
+}
+
+# Escape a path for Seatbelt policy quoting: escape \ and "
+policy_quote() {
+	local s="$1"
+	s="${s//\\/\\\\}"
+	s="${s//\"/\\\"}"
+	printf '%s' "$s"
+}
+
+# Parse CLI
+write_paths=()
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-w | --write)
+		shift
+		[[ $# -gt 0 ]] || usage
+		write_paths+=("$(abs_path "$1")")
+		shift
+		;;
+	-h | --help) usage ;;
+	--)
+		shift
+		break
+		;;
+	-*)
+		echo "sandbox: unknown option: $1" >&2
+		usage
+		;;
+	*) break ;;
+	esac
+done
+[[ $# -gt 0 ]] || usage
+
+OS="$(uname -s)"
+PWD_ABS="$(pwd -P)"
+
+run_linux() {
+	command -v bwrap >/dev/null 2>&1 || {
+		echo "sandbox: bubblewrap (bwrap) is not installed." >&2
+		exit 127
+	}
+
+	# 1) Base: make root view RO; keep /dev, /proc, and a tmpfs /tmp; DO NOT unshare net.
+	args=(--die-with-parent
+		--ro-bind / /
+		--dev /dev
+		--proc /proc
+		--tmpfs /tmp
+	)
+
+	# 2) Common top-level mount points RO so writable mounts can’t leak through.
+	for p in /home /var /root /run /opt /srv /media /mnt /usr /etc /sys; do
+		[[ -e "$p" ]] && args+=(--ro-bind "$p" "$p")
+	done
+
+	# 3) Overlay RW holes LAST so they take precedence.
+	#    Always include the current directory at its real path.
+	args+=(--bind "$PWD_ABS" "$PWD_ABS")
+	for ap in "${write_paths[@]}"; do
+		# Ensure files exist so file binds succeed
+		if [[ ! -d "$ap" && ! -e "$ap" ]]; then : >"$ap"; fi
+		args+=(--bind "$ap" "$ap")
+	done
+	args+=(--chdir "$PWD_ABS")
+
+	exec bwrap "${args[@]}" "$@"
+}
+
+run_macos() {
+	command -v sandbox-exec >/dev/null 2>&1 || {
+		echo "sandbox: sandbox-exec not found on this macOS." >&2
+		exit 127
+	}
+
+	# Ensure any whitelisted *files* exist so Seatbelt can actually write to them
+	for ap in "${write_paths[@]}"; do
+		if [[ ! -d "$ap" && ! -e "$ap" ]]; then : >"$ap"; fi
+	done
+
+	# Build a Seatbelt profile that denies writes globally, then whitelists:
+	# - The current directory (subpath)
+	# - Any -w directories (subpath)
+	# - Any -w files (literal)
+	policy_file="$(mktemp -t sandbox.seatbelt.XXXXXX)"
+	
+	# Debug mode: Keep policy file for inspection
+	if [[ "${CCO_DEBUG:-}" == "1" ]]; then
+		echo "DEBUG: Seatbelt policy file: $policy_file" >&2
+		echo "DEBUG: Write paths being added:" >&2
+		printf "  PWD: %s\n" "$PWD_ABS" >&2
+		for ap in "${write_paths[@]}"; do
+			printf "  Additional: %s\n" "$ap" >&2
+		done
+	else
+		trap 'rm -f "$policy_file"' EXIT
+	fi
+
+	{
+		echo "(version 1)"
+		echo "(allow default)"
+		
+		# Deny ALL file writes first
+		echo "(deny file-write*)"
+		
+		# Then allow only specific paths we need
+		# 1. Current working directory
+		printf '(allow file-write* (subpath "%s"))\n' "$(policy_quote "$PWD_ABS")"
+		
+		# 2. Additional paths passed via -w flags
+		for ap in "${write_paths[@]}"; do
+			if [[ -d "$ap" ]]; then
+				printf '(allow file-write* (subpath "%s"))\n' "$(policy_quote "$ap")"
+			else
+				printf '(allow file-write* (literal "%s"))\n' "$(policy_quote "$ap")"
+			fi
+		done
+		
+		# 3. Temp directories (needed for Keychain and other operations)
+		echo "(allow file-write* (subpath \"/tmp\"))"
+		echo "(allow file-write* (subpath \"/var/tmp\"))"
+		echo "(allow file-write* (subpath \"/var/folders\"))"
+		echo "(allow file-write* (subpath \"/private/var/folders\"))"
+		echo "(allow file-write* (subpath \"/private/tmp\"))"
+		
+		# 4. Common device files and pipes
+		echo "(allow file-write* (literal \"/dev/null\"))"
+		echo "(allow file-write* (literal \"/dev/zero\"))"
+		echo "(allow file-write* (literal \"/dev/random\"))"
+		echo "(allow file-write* (literal \"/dev/urandom\"))"
+		echo "(allow file-write* (literal \"/dev/tty\"))"
+		echo "(allow file-write* (literal \"/dev/stdin\"))"
+		echo "(allow file-write* (literal \"/dev/stdout\"))"
+		echo "(allow file-write* (literal \"/dev/stderr\"))"
+		echo "(allow file-write* (literal \"/dev/fd\"))"
+		
+		# 5. User's Library folders that apps commonly need
+		printf '(allow file-write* (subpath "%s/Library/Caches"))\n' "$(policy_quote "$HOME")"
+		printf '(allow file-write* (subpath "%s/Library/Logs"))\n' "$(policy_quote "$HOME")"
+		printf '(allow file-write* (subpath "%s/Library/Application Support"))\n' "$(policy_quote "$HOME")"
+	} >"$policy_file"
+
+	exec sandbox-exec -f "$policy_file" "$@"
+}
+
+case "$OS" in
+Linux) run_linux "$@" ;;
+Darwin) run_macos "$@" ;;
+*)
+	echo "sandbox: unsupported OS: $OS" >&2
+	exit 1
+	;;
+esac

@@ -3,7 +3,11 @@
 set -e
 
 # cco - Claude Container (or Claude Condom if you're so inclined)
-# A secure, minimal way to run Claude Code in a Docker container
+# A thin protective layer for Claude Code
+# Supports multiple sandboxing backends: native (bubblewrap/seatbelt) or Docker
+
+# Sandbox backend preference
+SANDBOX_BACKEND="" # auto, native, docker
 
 # Determine if we're running from installation or development
 if [[ -f "./Dockerfile" && -f "./cco" ]]; then
@@ -42,8 +46,62 @@ error() {
 	echo -e "${RED}✗${NC} $1" >&2
 }
 
-# Check if Docker is available
-check_dependencies() {
+# Detect available sandbox backends
+detect_sandbox_backend() {
+	local force_backend="$1"
+	
+	if [[ -n "$force_backend" ]]; then
+		case "$force_backend" in
+			native|docker)
+				SANDBOX_BACKEND="$force_backend"
+				return
+				;;
+			auto|"")
+				# Continue with auto-detection
+				;;
+			*)
+				error "Invalid sandbox backend: $force_backend"
+				error "Valid options: auto, native, docker"
+				exit 1
+				;;
+		esac
+	fi
+	
+	# Auto-detect best available backend
+	local os="$(uname -s)"
+	
+	if [[ "$os" == "Darwin" ]]; then
+		# macOS: Check for sandbox-exec (Seatbelt)
+		if command -v sandbox-exec &>/dev/null; then
+			SANDBOX_BACKEND="native"
+			log "Using native sandbox (Seatbelt)"
+		elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+			SANDBOX_BACKEND="docker"
+			log "Using Docker sandbox (Seatbelt not available)"
+		else
+			error "No sandbox backend available. Install Docker or ensure sandbox-exec is available."
+			exit 1
+		fi
+	elif [[ "$os" == "Linux" ]]; then
+		# Linux: Check for bubblewrap
+		if command -v bwrap &>/dev/null; then
+			SANDBOX_BACKEND="native"
+			log "Using native sandbox (bubblewrap)"
+		elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+			SANDBOX_BACKEND="docker"
+			log "Using Docker sandbox (bubblewrap not available)"
+		else
+			error "No sandbox backend available. Install bubblewrap or Docker."
+			exit 1
+		fi
+	else
+		error "Unsupported OS: $os"
+		exit 1
+	fi
+}
+
+# Check if Docker is available (only when using Docker backend)
+check_docker_dependencies() {
 	# Check for Docker
 	if ! command -v docker &>/dev/null; then
 		error "Docker is not installed or not in PATH"
@@ -56,7 +114,10 @@ check_dependencies() {
 		error "Please start Docker and try again"
 		exit 1
 	fi
+}
 
+# Check general dependencies
+check_dependencies() {
 	# Check for git (required for version detection and updates)
 	if ! command -v git &>/dev/null; then
 		error "Git is not installed or not in PATH"
@@ -551,7 +612,100 @@ show_info() {
 	fi
 }
 
-# Main run function
+# Run with native sandbox backend
+run_native_sandbox() {
+	local claude_config_dir
+	claude_config_dir=$(find_claude_config_dir)
+	local current_dir="$PWD"
+	local project_claude_dir="$current_dir/.claude"
+	
+	log "Starting cco with native sandbox..."
+	
+	# Check if sandbox script exists
+	local sandbox_script="$CCO_INSTALLATION_DIR/sandbox"
+	if [[ ! -x "$sandbox_script" ]]; then
+		error "Sandbox script not found or not executable: $sandbox_script"
+		error "Falling back to Docker backend"
+		SANDBOX_BACKEND="docker"
+		check_docker_dependencies
+		run_container
+		return
+	fi
+	
+	# Prepare write paths for sandbox
+	local write_paths=()
+	
+	# Always allow writes to current project directory
+	write_paths+=("--write" "$current_dir")
+	
+	# Add any additional directories specified with --add-dir
+	for dir in "${additional_dirs[@]}"; do
+		if [[ -d "$dir" ]]; then
+			write_paths+=("--write" "$dir")
+			log "Adding additional directory: $dir"
+		fi
+	done
+	
+	# Allow read-write access to Claude config directory 
+	# (needed for state files, MCP configs, etc.)
+	write_paths+=("--write" "$claude_config_dir")
+	
+	# Allow access to main .claude.json (Claude needs to write to this)
+	# Create it if it doesn't exist so the sandbox can whitelist it
+	if [[ ! -f "$HOME/.claude.json" ]]; then
+		echo "{}" > "$HOME/.claude.json"
+	fi
+	write_paths+=("--write" "$HOME/.claude.json")
+	
+	# Allow writes to project-specific .claude directory
+	if [[ -d "$project_claude_dir" ]]; then
+		write_paths+=("--write" "$project_claude_dir")
+	fi
+	
+	# Allow writes to temp directory for credential syncing
+	write_paths+=("--write" "/tmp")
+	
+	# On macOS, Claude needs to access the Keychain directly
+	# The sandbox-exec Seatbelt profile already allows default system operations
+	# including Keychain access, so we don't need to pre-extract credentials
+	
+	# On Linux with bubblewrap, credentials are in files so no special handling needed
+	
+	# Build the command
+	local cmd=("$sandbox_script" "${write_paths[@]}" "--")
+	
+	# Debug: Show the full sandbox command being executed
+	if [[ "${CCO_DEBUG:-}" == "1" ]]; then
+		log "DEBUG: Sandbox command: ${cmd[@]}"
+		log "DEBUG: Write paths:"
+		for wp in "${write_paths[@]}"; do
+			log "  $wp"
+		done
+	fi
+	
+	# Add claude command
+	if [[ "$shell_mode" = true ]]; then
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			# Interactive shell mode
+			cmd+=("bash")
+		else
+			# Shell command mode
+			cmd+=("bash" "-c" "${claude_args[*]}")
+		fi
+	else
+		# Always use --dangerously-skip-permissions since we're in a sandbox
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			cmd+=("claude" "--dangerously-skip-permissions")
+		else
+			cmd+=("claude" "--dangerously-skip-permissions" "${claude_args[@]}")
+		fi
+	fi
+	
+	# Execute in sandbox with full environment
+	exec "${cmd[@]}"
+}
+
+# Main run function (Docker backend)
 run_container() {
 	local host_uid
 	host_uid=$(id -u)
@@ -580,6 +734,14 @@ run_container() {
 		-v "$current_dir":"$current_dir"
 		-w "$current_dir"
 	)
+	
+	# Mount any additional directories specified with --add-dir
+	for dir in "${additional_dirs[@]}"; do
+		if [[ -d "$dir" ]]; then
+			docker_args+=(-v "$dir":"$dir")
+			log "Mounting additional directory: $dir"
+		fi
+	done
 
 	# Add TTY flags if available
 	if [[ -n "$tty_flag" ]]; then
@@ -969,9 +1131,121 @@ restore_credentials() {
 	fi
 }
 
-# Handle subcommands first
-subcommand_handled=false
-if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+# Initialize variables
+claude_args=()
+additional_dirs=()
+custom_env_vars=()
+custom_packages=()
+docker_access=false
+allow_oauth_refresh=false
+enable_background_tasks=false
+rebuild_image=false
+pull_image=false
+shell_mode=false
+
+# First pass: Extract cco-specific flags and collect remaining args
+# This ensures --add-dir and other cco flags are parsed before subcommands
+remaining_args=()
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--backend)
+		if [[ $# -lt 2 ]]; then
+			error "--backend requires an argument (auto, native, docker)"
+			exit 1
+		fi
+		SANDBOX_BACKEND="$2"
+		shift 2
+		;;
+	--rebuild)
+		rebuild_image=true
+		shift
+		;;
+	--pull)
+		pull_image=true
+		shift
+		;;
+	--docker)
+		docker_access=true
+		shift
+		;;
+	--allow-oauth-refresh)
+		allow_oauth_refresh=true
+		shift
+		;;
+	--enable-background-tasks)
+		enable_background_tasks=true
+		shift
+		;;
+	--env | -e)
+		if [[ $# -lt 2 ]]; then
+			error "--env requires an argument (KEY=VALUE or KEY)"
+			exit 1
+		fi
+		custom_env_vars+=("$2")
+		shift 2
+		;;
+	--packages | -p)
+		if [[ $# -lt 2 ]]; then
+			error "--packages requires an argument (package1,package2,...)"
+			exit 1
+		fi
+		IFS=',' read -ra ADDR <<<"$2"
+		for pkg in "${ADDR[@]}"; do
+			custom_packages+=("$pkg")
+		done
+		shift 2
+		;;
+	--add-dir | --add-dir=*)
+		# Handle --add-dir for both notations
+		if [[ "$1" == *"="* ]]; then
+			# --add-dir=<dir> notation
+			remaining_args+=("$1")  # Keep for Claude
+			dir_path="${1#*=}"
+			if [[ ! -d "$dir_path" ]]; then
+				warn "Directory does not exist: $dir_path"
+			else
+				dir_path=$(cd "$dir_path" && pwd)
+				additional_dirs+=("$dir_path")
+			fi
+			shift
+		else
+			# --add-dir <dir> notation
+			remaining_args+=("$1")  # Keep for Claude
+			shift
+			# Collect directories until next flag or known subcommand
+			while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
+				# Stop if we hit a known subcommand
+				case "$1" in
+					shell|self-update|cleanup|info|backup-creds|restore-creds|pull|rebuild)
+						# This is a subcommand, not a directory
+						break
+						;;
+					*)
+						dir_path="$1"
+						remaining_args+=("$1")  # Keep for Claude
+						if [[ ! -d "$dir_path" ]]; then
+							warn "Directory does not exist: $dir_path"
+						else
+							dir_path=$(cd "$dir_path" && pwd)
+							additional_dirs+=("$dir_path")
+						fi
+						shift
+						;;
+				esac
+			done
+		fi
+		;;
+	*)
+		# Not a cco flag, keep for subcommand/Claude processing
+		remaining_args+=("$1")
+		shift
+		;;
+	esac
+done
+
+# Now handle subcommands with remaining args
+set -- "${remaining_args[@]}"
+if [[ $# -gt 0 ]]; then
 	case $1 in
 	self-update)
 		update_cco
@@ -982,7 +1256,6 @@ if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		shift
 		# All remaining arguments are shell command arguments
 		claude_args=("$@")
-		subcommand_handled=true
 		;;
 	cleanup)
 		log "Cleaning up cco containers..."
@@ -1025,139 +1298,93 @@ if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		log "Rebuild completed successfully"
 		exit 0
 		;;
+	--version | -v)
+		show_version
+		exit 0
+		;;
+	--help | -h)
+		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
+		echo "A thin protective layer for Claude Code"
+		echo ""
+		echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
+		echo ""
+		echo "Commands:"
+		echo "  self-update       Update cco to latest version"
+		echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
+		echo "  cleanup           Remove all cco containers"
+		echo "  info              Show system information and readiness status"
+		echo "  pull              Pull latest pre-built image from registry"
+		echo "  rebuild           Rebuild Docker image from source"
+		echo ""
+		echo "Options:"
+		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
+		echo "  --pull            Pull latest pre-built image before starting container"
+		echo "  --version, -v     Show version information"
+		echo "  --env, -e KEY=VAL Set environment variable in container"
+		echo "  --packages, -p    Install additional apt packages into container"
+		echo "  --backend TYPE    Force specific sandbox backend (auto, native, docker)"
+		echo "  --docker          Enable Docker access (bind mount Docker socket)"
+		echo "  --allow-oauth-refresh (EXPERIMENTAL)"
+		echo "                    Allow OAuth token refresh with automatic sync-back"
+		echo "                    Permits Claude to refresh expired tokens and syncs them back"
+		echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
+		echo "                    Creates timestamped backups and uses clondom protection"
+		echo "  --enable-background-tasks"
+		echo "                    Enable Claude Code background tasks (disabled by default)"
+		echo "                    Background tasks provide enhanced functionality like"
+		echo "                    improved code analysis and autonomous development features"
+		echo "  --help, -h        Show this help message"
+		echo ""
+		echo "Claude Code Options (passed through):"
+		echo "  --add-dir <directories...>  Additional directories to allow tool access to"
+		echo ""
+		echo "All other arguments are passed to Claude Code inside the container."
+		echo "This means all Claude Code options (--resume, --model, etc.) work normally."
+		echo ""
+		echo "Experimental Commands:"
+		echo "  backup-creds      Create a backup of current Claude Code credentials"
+		echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
+		echo "                    or specify backup file path to restore specific backup"
+		echo ""
+		echo "Safety Recommendation:"
+		echo "  Before using --allow-oauth-refresh for the first time, run:"
+		echo "    cco backup-creds"
+		echo ""
+		echo "Environment Variables:"
+		echo "  - Automatically loads .env file if present"
+		echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
+		echo "  - Use --env to set custom variables"
+		echo ""
+		echo "Requirements:"
+		echo "  - Sandbox backend: ONE of the following:"
+		echo "    - macOS: sandbox-exec (built-in) OR Docker"
+		echo "    - Linux: bubblewrap (bwrap) OR Docker"
+		echo "  - Claude Code authenticated (run \`claude\` and login)"
+		exit 0
+		;;
 	*)
-		# Not a subcommand, continue with flag processing
+		# Not a subcommand, pass to Claude
+		claude_args=("$@")
 		;;
 	esac
 fi
 
-# Handle command line arguments
-rebuild_image=false
-pull_image=false
-if [[ "$subcommand_handled" = false ]]; then
-	claude_args=()
-	shell_mode=false
-fi
-custom_env_vars=()
-custom_packages=()
-docker_access=false
-allow_oauth_refresh=false
-enable_background_tasks=false
-
-if [[ "$subcommand_handled" = false ]]; then
-	while [[ $# -gt 0 ]]; do
-		case $1 in
-		--rebuild)
-			rebuild_image=true
-			shift
-			;;
-		--pull)
-			pull_image=true
-			shift
-			;;
-		--version | -v)
-			show_version
-			exit 0
-			;;
-		--env | -e)
-			if [[ $# -lt 2 ]]; then
-				error "--env requires an argument (KEY=VALUE or KEY)"
-				exit 1
-			fi
-			custom_env_vars+=("$2")
-			shift 2
-			;;
-		--packages | -p)
-			if [[ $# -lt 2 ]]; then
-				error "--packages requires an argument (package1,package2,...)"
-				exit 1
-			fi
-			IFS=',' read -ra ADDR <<<"$2"
-			for pkg in "${ADDR[@]}"; do
-				custom_packages+=("$pkg")
-			done
-			shift 2
-			;;
-		--docker)
-			docker_access=true
-			shift
-			;;
-		--allow-oauth-refresh)
-			allow_oauth_refresh=true
-			shift
-			;;
-		--enable-background-tasks)
-			enable_background_tasks=true
-			shift
-			;;
-		--help | -h)
-			echo "cco - Claude Container (or Claude Condom if you're so inclined)"
-			echo "A thin protective layer for Claude Code"
-			echo ""
-			echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
-			echo ""
-			echo "Commands:"
-			echo "  self-update       Update cco to latest version"
-			echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
-			echo "  cleanup           Remove all cco containers"
-			echo "  info              Show system information and readiness status"
-			echo "  pull              Pull latest pre-built image from registry"
-			echo "  rebuild           Rebuild Docker image from source"
-			echo ""
-			echo "Options:"
-			echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
-			echo "  --pull            Pull latest pre-built image before starting container"
-			echo "  --version, -v     Show version information"
-			echo "  --env, -e KEY=VAL Set environment variable in container"
-			echo "  --packages, -p    Install additional apt packages into container"
-			echo "  --docker          Enable Docker access (bind mount Docker socket)"
-			echo "  --allow-oauth-refresh (EXPERIMENTAL)"
-			echo "                    Allow OAuth token refresh with automatic sync-back"
-			echo "                    Permits Claude to refresh expired tokens and syncs them back"
-			echo "                    to Keychain (macOS) or credentials file (Linux) on exit"
-			echo "                    Creates timestamped backups and uses clondom protection"
-			echo "  --enable-background-tasks"
-			echo "                    Enable Claude Code background tasks (disabled by default)"
-			echo "                    Background tasks provide enhanced functionality like"
-			echo "                    improved code analysis and autonomous development features"
-			echo "  --help, -h        Show this help message"
-			echo ""
-			echo "All other arguments are passed to Claude Code inside the container."
-			echo "This means all Claude Code options (--resume, --model, etc.) work normally."
-			echo ""
-			echo "Experimental Commands:"
-			echo "  backup-creds      Create a backup of current Claude Code credentials"
-			echo "  restore-creds     Restore credentials from most recent backup (with confirmation)"
-			echo "                    or specify backup file path to restore specific backup"
-			echo ""
-			echo "Safety Recommendation:"
-			echo "  Before using --allow-oauth-refresh for the first time, run:"
-			echo "    cco backup-creds"
-			echo ""
-			echo "Environment Variables:"
-			echo "  - Automatically loads .env file if present"
-			echo "  - Passes through ANTHROPIC_API_KEY, proxy settings, git config, etc."
-			echo "  - Use --env to set custom variables"
-			echo ""
-			echo "Requirements:"
-			echo "  - Docker installed and running"
-			echo "  - Claude Code authenticated (run \`claude\` and login)"
-			exit 0
-			;;
-		*)
-			# Pass all other arguments to Claude
-			claude_args+=("$1")
-			shift
-			;;
-		esac
-	done
-fi
+# The main argument parsing loop has been moved to before subcommand handling
+# to ensure cco flags like --add-dir are parsed first
 
 # Main execution flow
 main() {
 	log "Starting cco..."
 
+	# Detect sandbox backend
+	detect_sandbox_backend "$SANDBOX_BACKEND"
+	
+	# Check dependencies based on backend
 	check_dependencies
+	if [[ "$SANDBOX_BACKEND" == "docker" ]]; then
+		check_docker_dependencies
+	fi
+	
 	verify_claude_authentication
 
 	# Handle --pull flag first
@@ -1170,37 +1397,45 @@ main() {
 		fi
 	fi
 
-	# Determine whether to pull pre-built image or build locally
-	if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-		# No local image exists
-		if should_use_prebuilt_image; then
-			# Try to pull pre-built image, fallback to build
-			if ! pull_prebuilt_image; then
+	# Only handle Docker image operations if using Docker backend
+	if [[ "$SANDBOX_BACKEND" == "docker" ]]; then
+		# Determine whether to pull pre-built image or build locally
+		if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+			# No local image exists
+			if should_use_prebuilt_image; then
+				# Try to pull pre-built image, fallback to build
+				if ! pull_prebuilt_image; then
+					build_image
+				fi
+			else
+				# Build locally due to customizations
+				if [[ "$rebuild_image" = true ]]; then
+					log "Rebuilding cco image..."
+				elif [[ ${#custom_packages[@]} -gt 0 ]]; then
+					log "Custom packages specified, building image..."
+				fi
 				build_image
 			fi
-		else
-			# Build locally due to customizations
-			if [[ "$rebuild_image" = true ]]; then
+		elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
+			# Force rebuild requested or customizations specified
+			if [[ ${#custom_packages[@]} -gt 0 ]]; then
+				log "Custom packages specified, rebuilding image..."
+			else
 				log "Rebuilding cco image..."
-			elif [[ ${#custom_packages[@]} -gt 0 ]]; then
-				log "Custom packages specified, building image..."
 			fi
+			docker image rm "$IMAGE_NAME" &>/dev/null || true
 			build_image
-		fi
-	elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
-		# Force rebuild requested or customizations specified
-		if [[ ${#custom_packages[@]} -gt 0 ]]; then
-			log "Custom packages specified, rebuilding image..."
 		else
-			log "Rebuilding cco image..."
+			log "Using existing cco image"
 		fi
-		docker image rm "$IMAGE_NAME" &>/dev/null || true
-		build_image
-	else
-		log "Using existing cco image"
 	fi
 
-	run_container
+	# Run with appropriate backend
+	if [[ "$SANDBOX_BACKEND" == "native" ]]; then
+		run_native_sandbox
+	else
+		run_container
+	fi
 }
 
 main
