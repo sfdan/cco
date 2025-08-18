@@ -646,11 +646,21 @@ run_native_sandbox() {
 		fi
 	done
 	
-	# Allow read-write access to Claude config directory 
-	# (needed for state files, MCP configs, etc.)
-	write_paths+=("--write" "$claude_config_dir")
+	# Allow read-write access to the entire ~/.claude directory
+	# This is needed for state files, MCP configs, session data, etc.
+	# Even if config is in ~/.config/claude, Claude may need to write to ~/.claude
+	if [[ ! -d "$HOME/.claude" ]]; then
+		mkdir -p "$HOME/.claude"
+	fi
+	write_paths+=("--write" "$HOME/.claude")
 	
-	# Allow access to main .claude.json (Claude needs to write to this)
+	# Also allow the detected config directory if it's different from ~/.claude
+	if [[ "$claude_config_dir" != "$HOME/.claude" ]]; then
+		write_paths+=("--write" "$claude_config_dir")
+	fi
+	
+	# Allow access to main .claude.json file (Claude needs to write to this)
+	# This is a specific file in the home directory, NOT inside ~/.claude/
 	# Create it if it doesn't exist so the sandbox can whitelist it
 	if [[ ! -f "$HOME/.claude.json" ]]; then
 		echo "{}" > "$HOME/.claude.json"
@@ -893,9 +903,20 @@ run_container() {
 		trap 'rm -rf "$temp_creds_dir"' EXIT
 	fi
 
-	# Mount system Claude config directory (read-write for state updates)
-	log "Mounting Claude config directory: $host_system_claude_dir → $container_home/.claude"
-	docker_args+=(-v "$host_system_claude_dir":"$container_home/.claude")
+	# Ensure ~/.claude directory exists and mount it (read-write for state updates)
+	# Claude needs to write to this directory for session data, MCP configs, etc.
+	if [[ ! -d "$HOME/.claude" ]]; then
+		mkdir -p "$HOME/.claude"
+	fi
+	log "Mounting ~/.claude directory: $HOME/.claude → $container_home/.claude"
+	docker_args+=(-v "$HOME/.claude":"$container_home/.claude")
+	
+	# If the detected config directory is different from ~/.claude, mount it too
+	if [[ "$host_system_claude_dir" != "$HOME/.claude" ]]; then
+		log "Also mounting config directory: $host_system_claude_dir → $container_home/.config/claude"
+		# Create the parent directory in the mount command
+		docker_args+=(-v "$host_system_claude_dir":"$container_home/.config/claude")
+	fi
 
 	# Extract fresh credentials from keychain for macOS
 	if command -v security &>/dev/null; then
@@ -944,10 +965,12 @@ run_container() {
 	fi
 
 	# Mount main .claude.json from home directory (this is separate from .claude/)
-	if [[ -f "$HOME/.claude.json" ]]; then
-		log "Mounting main .claude.json from home directory"
-		docker_args+=(-v "$HOME/.claude.json":"$container_home/.claude.json")
+	# Create it if it doesn't exist to ensure Claude can write to it
+	if [[ ! -f "$HOME/.claude.json" ]]; then
+		echo "{}" > "$HOME/.claude.json"
 	fi
+	log "Mounting main .claude.json from home directory"
+	docker_args+=(-v "$HOME/.claude.json":"$container_home/.claude.json")
 
 	# Mount project-specific .claude directory (read-write for project settings)
 	if [[ -d "$project_claude_dir" ]]; then
