@@ -48,6 +48,80 @@ determine_symlink_location() {
 	SYMLINK_PATH="${SYMLINK_DIR}/cco"
 }
 
+# Check sandbox backend availability
+check_sandbox_availability() {
+	local os
+	os="$(uname -s)"
+	local available_backends=()
+	local missing_suggestions=()
+	local warnings=()
+
+	if [[ "$os" == "Darwin" ]]; then
+		# macOS: Check for sandbox-exec (Seatbelt)
+		if command -v sandbox-exec &>/dev/null; then
+			available_backends+=("native sandbox (Seatbelt)")
+		else
+			missing_suggestions+=("sandbox-exec (should be built-in on macOS)")
+		fi
+	elif [[ "$os" == "Linux" ]]; then
+		# Linux: Check for bubblewrap
+		if command -v bwrap &>/dev/null; then
+			available_backends+=("native sandbox (bubblewrap)")
+		else
+			missing_suggestions+=("bubblewrap: apt install bubblewrap / dnf install bubblewrap / pacman -S bubblewrap")
+		fi
+	else
+		warn "Unsupported OS: $os - only Docker backend will be available"
+	fi
+
+	# Check for Docker (fallback backend)
+	if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+		available_backends+=("Docker")
+	elif command -v docker &>/dev/null; then
+		warnings+=("Docker is installed but daemon is not running")
+		missing_suggestions+=("Docker: start Docker daemon or install from https://docs.docker.com/get-docker/")
+	else
+		missing_suggestions+=("Docker: https://docs.docker.com/get-docker/")
+	fi
+
+	# Show warnings first
+	for warning_msg in "${warnings[@]}"; do
+		warn "$warning_msg"
+	done
+
+	if [[ ${#available_backends[@]} -eq 0 ]]; then
+		warn "No sandbox backend currently available for cco"
+		warn ""
+		warn "cco requires at least one of the following sandbox backends to run:"
+		for suggestion in "${missing_suggestions[@]}"; do
+			warn "  • $suggestion"
+		done
+		warn ""
+		warn "Note: Native sandboxing is preferred for performance, Docker is used as fallback"
+		warn ""
+		warn "Installation will continue, but cco will not work until a sandbox backend is installed."
+		return 0
+	fi
+
+	# Show what's available
+	if [[ ${#available_backends[@]} -eq 1 ]]; then
+		log "Sandbox backend available: ${available_backends[0]}"
+	else
+		log "Sandbox backends available: $(
+			IFS=', '
+			echo "${available_backends[*]}"
+		)"
+	fi
+
+	# Show suggestions for missing backends (informational, not blocking)
+	if [[ ${#missing_suggestions[@]} -gt 0 ]]; then
+		info "Additional sandbox options can be installed:"
+		for suggestion in "${missing_suggestions[@]}"; do
+			info "  • $suggestion"
+		done
+	fi
+}
+
 # Check prerequisites
 check_prerequisites() {
 	log "Checking prerequisites..."
@@ -59,22 +133,14 @@ check_prerequisites() {
 		missing_tools+=("git")
 	fi
 
-	if ! command -v docker &>/dev/null; then
-		missing_tools+=("docker")
-	fi
-
 	if [[ ${#missing_tools[@]} -gt 0 ]]; then
 		error "Missing required tools: ${missing_tools[*]}"
 		error "Please install them and try again."
 		exit 1
 	fi
 
-	# Check if Docker daemon is running
-	if ! docker info &>/dev/null; then
-		error "Docker daemon is not running"
-		error "Please start Docker and try again."
-		exit 1
-	fi
+	# Check for sandbox backends
+	check_sandbox_availability
 
 	log "Prerequisites check passed"
 }
@@ -228,21 +294,21 @@ main() {
 
 # Handle command line arguments
 case "${1:-}" in
---help | -h)
-	echo "cco installer - a thin protective layer for Claude Code"
-	echo ""
-	echo "Usage: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
-	echo ""
-	echo "This script will:"
-	echo "  • Clone cco to ~/.local/share/cco"
-	echo "  • Create symlink in ~/bin (if in PATH) or /usr/local/bin"
-	echo "  • Enable global cco usage from any directory"
-	echo ""
-	echo "Options:"
-	echo "  --help, -h    Show this help message"
-	exit 0
-	;;
-*)
-	main
-	;;
+	--help | -h)
+		echo "cco installer - a thin protective layer for Claude Code"
+		echo ""
+		echo "Usage: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
+		echo ""
+		echo "This script will:"
+		echo "  • Clone cco to ~/.local/share/cco"
+		echo "  • Create symlink in ~/bin (if in PATH) or /usr/local/bin"
+		echo "  • Enable global cco usage from any directory"
+		echo ""
+		echo "Options:"
+		echo "  --help, -h    Show this help message"
+		exit 0
+		;;
+	*)
+		main
+		;;
 esac
