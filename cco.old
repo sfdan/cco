@@ -23,10 +23,6 @@ else
 fi
 
 IMAGE_NAME="cco:latest"
-
-# Pin updates to this upstream commit by default (override with env CCO_PINNED_COMMIT if needed)
-: "${CCO_PINNED_COMMIT:=a9665aec60168c0b6c8e131248e71fa678ab6232}"
-
 # Generate unique container name to allow concurrent sessions
 # Sanitize directory name for Docker container naming (only alphanumeric, underscore, dash, dot)
 sanitized_dir=$(basename "$PWD" | tr -c '[:alnum:]._-' '_')
@@ -75,6 +71,7 @@ detect_sandbox_backend() {
 	local os="$(uname -s)"
 	
 	if [[ "$os" == "Darwin" ]]; then
+		# macOS: Check for sandbox-exec (Seatbelt)
 		if command -v sandbox-exec &>/dev/null; then
 			SANDBOX_BACKEND="native"
 			log "Using native sandbox (Seatbelt)"
@@ -86,6 +83,7 @@ detect_sandbox_backend() {
 			exit 1
 		fi
 	elif [[ "$os" == "Linux" ]]; then
+		# Linux: Check for bubblewrap
 		if command -v bwrap &>/dev/null; then
 			SANDBOX_BACKEND="native"
 			log "Using native sandbox (bubblewrap)"
@@ -104,6 +102,7 @@ detect_sandbox_backend() {
 
 # Check if Docker is available (only when using Docker backend)
 check_docker_dependencies() {
+	# Check for Docker
 	if ! command -v docker &>/dev/null; then
 		error "Docker is not installed or not in PATH"
 		error "Please install Docker: https://docs.docker.com/get-docker/"
@@ -119,6 +118,7 @@ check_docker_dependencies() {
 
 # Check general dependencies
 check_dependencies() {
+	# Check for git (required for version detection and updates)
 	if ! command -v git &>/dev/null; then
 		error "Git is not installed or not in PATH"
 		error "Please install git: https://git-scm.com/downloads"
@@ -126,7 +126,10 @@ check_dependencies() {
 	fi
 }
 
-# Determine Claude Code config directory
+# Determine Claude Code config directory following priority order:
+# 1. CLAUDE_CONFIG_DIR env var (if set)
+# 2. XDG_CONFIG_HOME/claude or ~/.config/claude (new default since v1.0.30)
+# 3. ~/.claude (legacy fallback)
 get_claude_config_dir() {
 	if [[ -n "$CLAUDE_CONFIG_DIR" ]]; then
 		echo "$CLAUDE_CONFIG_DIR"
@@ -139,45 +142,58 @@ get_claude_config_dir() {
 	fi
 }
 
-# Find where Claude Code stores its configuration
+# Find where Claude Code actually stores its configuration
 find_claude_config_dir() {
-	local primary_dir legacy_dir
+	local primary_dir
 	primary_dir=$(get_claude_config_dir)
-	legacy_dir="$HOME/.claude"
+	local legacy_dir="$HOME/.claude"
 
+	# Check primary location first
 	if [[ -d "$primary_dir" ]] && [[ -f "$primary_dir/.credentials.json" || -n "$(command -v security)" ]]; then
-		echo "$primary_dir"; return
+		echo "$primary_dir"
+		return
 	fi
+
+	# Fall back to legacy location
 	if [[ -d "$legacy_dir" ]] && [[ -f "$legacy_dir/.credentials.json" || -n "$(command -v security)" ]]; then
-		echo "$legacy_dir"; return
+		echo "$legacy_dir"
+		return
 	fi
+
+	# Return primary location for error reporting
 	echo "$primary_dir"
 }
 
-# Verify Claude auth exists
+# Verify Claude Code authentication is available
 verify_claude_authentication() {
 	log "Verifying Claude Code authentication..."
-	local dir; dir=$(find_claude_config_dir)
-	if [[ ! -d "$dir" ]]; then
-		error "No Claude Code configuration found at $dir"
+
+	local claude_config_dir
+	claude_config_dir=$(find_claude_config_dir)
+
+	# Check if config directory exists
+	if [[ ! -d "$claude_config_dir" ]]; then
+		error "No Claude Code configuration found at $claude_config_dir"
 		error "Please run \`claude\` and login to authenticate, then try again."
 		exit 1
 	fi
 
+	# Verify credentials exist (simple check, no staging)
 	if command -v security &>/dev/null; then
 		if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
-			error "No Claude Code credentials in macOS Keychain"
+			error "No Claude Code credentials found in macOS Keychain"
 			error "Please run \`claude\` and login to authenticate, then try again."
 			exit 1
 		fi
 		log "Verified Claude Code credentials in macOS Keychain"
-	elif [[ -f "$dir/.credentials.json" ]]; then
+	elif [[ -f "$claude_config_dir/.credentials.json" ]]; then
 		log "Verified Claude Code credentials file exists"
 	else
 		error "No Claude Code credentials found!"
 		error "Please run \`claude\` and login to authenticate, then try again."
 		exit 1
 	fi
+
 	log "Claude Code authentication verified"
 }
 
@@ -188,32 +204,62 @@ sync_credentials_back() {
 	local host_creds_file="$3"
 	local startup_system_content="$4"
 	local temp_creds_file="$temp_creds_dir/.credentials.json"
-	if [[ ! -f "$temp_creds_file" ]]; then return 0; fi
-	local current_content; current_content=$(cat "$temp_creds_file")
-	if [[ "$current_content" = "$original_content" ]]; then return 0; fi
+
+	# Check if credentials file exists and was potentially updated
+	if [[ ! -f "$temp_creds_file" ]]; then
+		return 0 # No credentials file to sync
+	fi
+
+	# Check if credentials content changed
+	local current_content
+	current_content=$(cat "$temp_creds_file")
+
+	# If content unchanged, no sync needed
+	if [[ "$current_content" = "$original_content" ]]; then
+		return 0
+	fi
+
 	log "Detected updated credentials, syncing back to host system..."
+
+	# Safety check: Verify system credentials haven't changed during our session
 	local current_system_content=""
 	if command -v security &>/dev/null; then
+		# macOS: Check current Keychain content
 		current_system_content=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
 	elif [[ -n "$host_creds_file" && -f "$host_creds_file" ]]; then
+		# Linux: Check current file content
 		current_system_content=$(cat "$host_creds_file")
 	fi
+
+	# Abort if system credentials changed during our session
 	if [[ -n "$startup_system_content" && -n "$current_system_content" && "$startup_system_content" != "$current_system_content" ]]; then
 		warn "SAFETY ABORT: System credentials were modified during session by another process"
+		warn "This could be Claude CLI, another cco instance, or manual changes"
 		warn "Skipping sync-back to prevent credential conflicts"
 		warn "Your container's updated credentials are preserved in: $temp_creds_file"
 		warn "To manually sync: ./cco restore-creds '$temp_creds_file'"
 		return 1
 	fi
-	local backup_timestamp; backup_timestamp=$(date +"%Y%m%d_%H%M%S")
+
+	# Create backup timestamp
+	local backup_timestamp
+	backup_timestamp=$(date +"%Y%m%d_%H%M%S")
+
+	# Sync back based on platform
 	if command -v security &>/dev/null; then
+		# macOS: Backup and update Keychain
 		log "Creating backup of original Keychain credentials..."
-		local original_creds; original_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+		local original_creds
+		original_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
 		if [[ -n "$original_creds" ]]; then
+			# Save backup to temp location
 			echo "$original_creds" >"$temp_creds_dir/.credentials.backup.$backup_timestamp.json"
 			log "Backup saved to: $temp_creds_dir/.credentials.backup.$backup_timestamp.json"
 		fi
-		local creds_content; creds_content=$(cat "$temp_creds_file")
+
+		# Update Keychain with new credentials
+		local creds_content
+		creds_content=$(cat "$temp_creds_file")
 		if security add-generic-password -U -s "Claude Code-credentials" -a "$USER" -w "$creds_content" >/dev/null 2>&1; then
 			log "Successfully updated credentials in macOS Keychain"
 		else
@@ -224,10 +270,13 @@ sync_credentials_back() {
 			fi
 		fi
 	elif [[ -n "$host_creds_file" && -f "$host_creds_file" ]]; then
+		# Linux: Backup and update credentials file
 		local backup_file="${host_creds_file}.backup.$backup_timestamp"
 		log "Creating backup of original credentials file..."
 		if cp "$host_creds_file" "$backup_file"; then
 			log "Backup saved to: $backup_file"
+
+			# Update credentials file with new content
 			if cp "$temp_creds_file" "$host_creds_file"; then
 				log "Successfully updated credentials file: $host_creds_file"
 			else
@@ -245,41 +294,59 @@ sync_credentials_back() {
 	fi
 }
 
-# No auto-pull by default unless explicitly requested
+# Check if we should use pre-built image
 should_use_prebuilt_image() {
-	if [[ "${CCO_DISABLE_PULL:-1}" = "1" ]]; then
+	# Don't use pre-built if explicitly rebuilding
+	if [[ "$rebuild_image" = true ]]; then
 		return 1
 	fi
-	if [[ "$rebuild_image" = true ]]; then return 1; fi
-	if [[ ${#custom_packages[@]} -gt 0 ]]; then return 1; fi
+
+	# Don't use pre-built if custom packages specified
+	if [[ ${#custom_packages[@]} -gt 0 ]]; then
+		return 1
+	fi
+
+	# Don't use pre-built if Dockerfile has been modified locally
 	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local dockerfile_status
 		dockerfile_status=$(cd "$CCO_INSTALLATION_DIR" && git status --porcelain Dockerfile 2>/dev/null)
-		[[ -n "$dockerfile_status" ]] && return 1
+		if [[ -n "$dockerfile_status" ]]; then
+			return 1
+		fi
 	fi
+
 	return 0
 }
 
+# Get the appropriate image tag for current version
 get_prebuilt_image_tag() {
 	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		local commit_sha
 		commit_sha=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null)
-		echo "ghcr.io/sfdan/cco:${commit_sha}"
+		echo "ghcr.io/nikvdp/cco:${commit_sha}"
 	else
-		echo "ghcr.io/sfdan/cco:latest"
+		echo "ghcr.io/nikvdp/cco:latest"
 	fi
 }
 
+# Try to pull pre-built image
 pull_prebuilt_image() {
-	local image_tag; image_tag=$(get_prebuilt_image_tag)
+	local image_tag
+	image_tag=$(get_prebuilt_image_tag)
+
 	log "Attempting to pull pre-built image: $image_tag"
+
+	# First check if the image exists in the registry
 	log "Checking if pre-built image is available..."
 	if ! docker manifest inspect "$image_tag" >/dev/null 2>&1; then
 		warn "Pre-built image not found in registry, building locally..."
 		return 1
 	fi
+
 	log "Pre-built image found, downloading..."
+	# Pull without timeout - let it take as long as needed
 	if docker pull "$image_tag" 2>&1; then
+		# Tag as local image name for consistency
 		docker tag "$image_tag" "$IMAGE_NAME" >/dev/null 2>&1
 		log "Successfully pulled pre-built image"
 		return 0
@@ -289,22 +356,36 @@ pull_prebuilt_image() {
 	fi
 }
 
+# Build Docker image
 build_image() {
 	local original_dir="$PWD"
+
 	log "Building cco Docker image..."
+
+	# Build from the directory containing the cco script
 	cd "$CCO_INSTALLATION_DIR" || {
 		error "cco installation not found at $CCO_INSTALLATION_DIR"
-		error "Run: curl -fsSL https://raw.githubusercontent.com/sfdan/cco/master/install.sh | bash"
+		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
 		exit 1
 	}
+
 	local build_args=()
+
+	# Add custom packages if specified
 	if [[ ${#custom_packages[@]} -gt 0 ]]; then
-		local packages_list; packages_list=$(IFS=' '; echo "${custom_packages[*]}")
+		local packages_list
+		packages_list=$(
+			IFS=' '
+			echo "${custom_packages[*]}"
+		)
 		log "Installing additional packages: $packages_list"
 		build_args+=(--build-arg CUSTOM_PACKAGES="$packages_list")
 	fi
+
+	# Check for custom Dockerfile in XDG config directory
 	local custom_dockerfile="${XDG_CONFIG_HOME:-$HOME/.config}/cco/Dockerfile"
 	local dockerfile_arg=""
+
 	if [[ -f "$custom_dockerfile" ]]; then
 		log "Using custom Dockerfile: $custom_dockerfile"
 		dockerfile_arg=("-f" "$custom_dockerfile")
@@ -312,27 +393,37 @@ build_image() {
 		log "Using default Dockerfile"
 		dockerfile_arg=("-f" "Dockerfile")
 	fi
+
+	# Add cache-busting argument to force Claude Code reinstallation on --rebuild
 	build_args+=(--build-arg CACHE_BUST="$(date +%s)")
-	local prebuilt_image_tag; prebuilt_image_tag=$(get_prebuilt_image_tag)
+
+	# Use cache-from if we have a local pre-built image available
+	local prebuilt_image_tag
+	prebuilt_image_tag=$(get_prebuilt_image_tag)
 	if docker image inspect "$prebuilt_image_tag" &>/dev/null; then
 		log "Using local pre-built image for build cache: $prebuilt_image_tag"
 		build_args+=(--cache-from "$prebuilt_image_tag")
 	fi
+
 	docker build -t "$IMAGE_NAME" "${build_args[@]}" "${dockerfile_arg[@]}" .
 	cd "$original_dir"
 	log "Image built successfully"
 }
 
+# Update cco installation
 update_cco() {
 	if [[ ! -d "$CCO_INSTALLATION_DIR/.git" ]]; then
 		error "cco installation not found at $CCO_INSTALLATION_DIR"
-		error "Run: curl -fsSL https://raw.githubusercontent.com/sfdan/cco/master/install.sh | bash"
+		error "Run: curl -fsSL https://raw.githubusercontent.com/nikvdp/cco/master/install.sh | bash"
 		exit 1
 	fi
+
 	local original_dir="$PWD"
 	cd "$CCO_INSTALLATION_DIR"
+
 	log "Updating cco installation..."
 
+	# Check for local modifications
 	if ! git diff --quiet HEAD 2>/dev/null; then
 		warn "WARNING: Your cco installation has local modifications."
 		warn "Most users should reset to the latest version (this is safe)."
@@ -342,61 +433,63 @@ update_cco() {
 		echo
 		if [[ $REPLY =~ ^[Nn]$ ]]; then
 			warn "Skipping update to preserve local changes"
-			cd "$original_dir"; return 1
+			cd "$original_dir"
+			return 1
 		fi
 		log "Resetting to latest version..."
-		git reset --hard
+		git reset --hard origin/master
 	fi
 
-	# Fetch and pin to the exact commit (no fast-forward pulls)
-	git fetch origin --tags --prune
-	if git rev-parse --verify "$CCO_PINNED_COMMIT^{commit}" >/dev/null 2>&1; then
-		log "Pinning to commit: $CCO_PINNED_COMMIT"
-		git reset --hard "$CCO_PINNED_COMMIT"
-	else
-		error "Pinned commit not found: $CCO_PINNED_COMMIT"
-		error "Set CCO_PINNED_COMMIT to a valid commit or update the script."
-		cd "$original_dir"; exit 1
-	fi
-	local new_version; new_version=$(git rev-parse --short HEAD)
+	git fetch origin
+	git pull origin master
+	local new_version
+	new_version=$(git rev-parse --short HEAD)
 	log "Updated to $new_version"
 
 	log "Rebuilding Docker image with latest changes..."
 	build_image
+
 	cd "$original_dir"
 	log "Update complete!"
 }
 
+# Show version information
 show_version() {
 	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
-		local version; version=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+		local version
+		version=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 		local install_type="installation"
 	else
 		local version="dev"
 		local install_type="development"
 	fi
+
 	echo "cco $version ($install_type)"
 	echo "Installation: $CCO_INSTALLATION_DIR"
-	echo "Pinned commit: ${CCO_PINNED_COMMIT}"
 }
 
+# Show comprehensive system information and status
 show_info() {
 	echo "cco - System Information & Status"
 	echo "=================================="
 	echo
+
+	# Version info
 	if [[ -d "$CCO_INSTALLATION_DIR/.git" ]]; then
-		local version; version=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+		local version
+		version=$(cd "$CCO_INSTALLATION_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 		local install_type="installation"
-		local git_status; git_status=$(cd "$CCO_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
+		local git_status
+		git_status=$(cd "$CCO_INSTALLATION_DIR" && git status --porcelain 2>/dev/null)
 	else
 		local version="dev"
 		local install_type="development"
 		local git_status=""
 	fi
+
 	echo "📦 cco Information:"
 	echo "  Version: $version ($install_type)"
 	echo "  Location: $CCO_INSTALLATION_DIR"
-	echo "  Pinned Commit: ${CCO_PINNED_COMMIT}"
 	if [[ -n "$git_status" ]]; then
 		echo "  Git Status: Modified (local changes present)"
 	elif [[ "$install_type" == "installation" ]]; then
@@ -519,10 +612,16 @@ show_info() {
 	fi
 }
 
+# Run with native sandbox backend
 run_native_sandbox() {
-	local claude_config_dir; claude_config_dir=$(find_claude_config_dir)
-	local current_dir="$PWD"; local project_claude_dir="$current_dir/.claude"
+	local claude_config_dir
+	claude_config_dir=$(find_claude_config_dir)
+	local current_dir="$PWD"
+	local project_claude_dir="$current_dir/.claude"
+	
 	log "Starting cco with native sandbox..."
+	
+	# Check if sandbox script exists
 	local sandbox_script="$CCO_INSTALLATION_DIR/sandbox"
 	if [[ ! -x "$sandbox_script" ]]; then
 		error "Sandbox script not found or not executable: $sandbox_script"
@@ -532,76 +631,208 @@ run_native_sandbox() {
 		run_container
 		return
 	fi
+	
+	# Prepare write paths for sandbox
 	local write_paths=()
+	
+	# Always allow writes to current project directory
 	write_paths+=("--write" "$current_dir")
+	
+	# Add any additional directories specified with --add-dir
 	for dir in "${additional_dirs[@]}"; do
 		if [[ -d "$dir" ]]; then
-			write_paths+=("--write" "$dir"); log "Adding additional directory: $dir"
+			write_paths+=("--write" "$dir")
+			log "Adding additional directory: $dir"
 		fi
 	done
-	if [[ ! -d "$HOME/.claude" ]]; then mkdir -p "$HOME/.claude"; fi
+	
+	# Allow read-write access to the entire ~/.claude directory
+	# This is needed for state files, MCP configs, session data, etc.
+	# Even if config is in ~/.config/claude, Claude may need to write to ~/.claude
+	if [[ ! -d "$HOME/.claude" ]]; then
+		mkdir -p "$HOME/.claude"
+	fi
 	write_paths+=("--write" "$HOME/.claude")
-	if [[ "$claude_config_dir" != "$HOME/.claude" ]]; then write_paths+=("--write" "$claude_config_dir"); fi
-	if [[ ! -f "$HOME/.claude.json" ]]; then echo "{}" > "$HOME/.claude.json"; fi
+	
+	# Also allow the detected config directory if it's different from ~/.claude
+	if [[ "$claude_config_dir" != "$HOME/.claude" ]]; then
+		write_paths+=("--write" "$claude_config_dir")
+	fi
+	
+	# Allow access to main .claude.json file (Claude needs to write to this)
+	# This is a specific file in the home directory, NOT inside ~/.claude/
+	# Create it if it doesn't exist so the sandbox can whitelist it
+	if [[ ! -f "$HOME/.claude.json" ]]; then
+		echo "{}" > "$HOME/.claude.json"
+	fi
 	write_paths+=("--write" "$HOME/.claude.json")
-	if [[ -d "$project_claude_dir" ]]; then write_paths+=("--write" "$project_claude_dir"); fi
+	
+	# Allow writes to project-specific .claude directory
+	if [[ -d "$project_claude_dir" ]]; then
+		write_paths+=("--write" "$project_claude_dir")
+	fi
+	
+	# Allow writes to temp directory for credential syncing
 	write_paths+=("--write" "/tmp")
+	
+	# On macOS, Claude needs to access the Keychain directly
+	# The sandbox-exec Seatbelt profile already allows default system operations
+	# including Keychain access, so we don't need to pre-extract credentials
+	
+	# On Linux with bubblewrap, credentials are in files so no special handling needed
+	
+	# Build the command
 	local cmd=("$sandbox_script" "${write_paths[@]}" "--")
+	
+	# Debug: Show the full sandbox command being executed
 	if [[ "${CCO_DEBUG:-}" == "1" ]]; then
 		log "DEBUG: Sandbox command: ${cmd[@]}"
-		for wp in "${write_paths[@]}"; do log "  $wp"; done
+		log "DEBUG: Write paths:"
+		for wp in "${write_paths[@]}"; do
+			log "  $wp"
+		done
 	fi
+	
+	# Add claude command
 	if [[ "$shell_mode" = true ]]; then
-		if [[ ${#claude_args[@]} -eq 0 ]]; then cmd+=("bash"); else cmd+=("bash" "-c" "${claude_args[*]}"); fi
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			# Interactive shell mode
+			cmd+=("bash")
+		else
+			# Shell command mode
+			cmd+=("bash" "-c" "${claude_args[*]}")
+		fi
 	else
-		if [[ ${#claude_args[@]} -eq 0 ]]; then cmd+=("claude" "--dangerously-skip-permissions"); else cmd+=("claude" "--dangerously-skip-permissions" "${claude_args[@]}"); fi
+		# Always use --dangerously-skip-permissions since we're in a sandbox
+		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			cmd+=("claude" "--dangerously-skip-permissions")
+		else
+			cmd+=("claude" "--dangerously-skip-permissions" "${claude_args[@]}")
+		fi
 	fi
+	
+	# Execute in sandbox with full environment
 	exec "${cmd[@]}"
 }
 
+# Main run function (Docker backend)
 run_container() {
-    local host_uid; host_uid=$(id -u)
-	local host_gid; host_gid=$(id -g)
+	local host_uid
+	host_uid=$(id -u)
+	local host_gid
+	host_gid=$(id -g)
 	local current_dir="$PWD"
-	log "Starting cco container..."
-	docker rm -f "$CONTAINER_NAME" &>/dev/null || true
-	local tty_flag=""; if [[ -t 0 && -t 1 ]]; then tty_flag="-it"; fi
-	local docker_args=( --rm --init --name "$CONTAINER_NAME" --user "root" -e "HOST_UID=${host_uid}" -e "HOST_GID=${host_gid}" -v "$current_dir":"$current_dir" -w "$current_dir")
-	for dir in "${additional_dirs[@]}"; do if [[ -d "$dir" ]]; then docker_args+=(-v "$dir":"$dir"); log "Mounting additional directory: $dir"; fi; done
-	if [[ -n "$tty_flag" ]]; then docker_args+=("$tty_flag"); fi
-	local host_timezone=""
-	if [[ -f /etc/timezone ]]; then host_timezone=$(cat /etc/timezone)
-	elif [[ -L /etc/localtime ]]; then host_timezone=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
-	elif command -v timedatectl &>/dev/null; then host_timezone=$(timedatectl show --property=Timezone --value 2>/dev/null)
-	elif [[ -f /etc/localtime ]]; then host_timezone=$(find /usr/share/zoneinfo -type f -exec cmp -s {} /etc/localtime \; -print | head -1 | sed 's|.*/zoneinfo/||'); fi
-	local env_vars=("ANTHROPIC_API_KEY" "ANTHROPIC_BASE_URL" "CLAUDE_CONFIG_DIR" "XDG_CONFIG_HOME" "NO_COLOR" "TERM" "COLORTERM" "LANG" "LC_ALL" "HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY" "GIT_AUTHOR_NAME" "GIT_AUTHOR_EMAIL" "GIT_COMMITTER_NAME" "GIT_COMMITTER_EMAIL")
-	for var in "${env_vars[@]}"; do if [[ -n "${!var}" ]]; then docker_args+=(-e "$var=${!var}"); fi; done
-	if [[ -n "$host_timezone" ]]; then log "Setting container timezone to: $host_timezone"; docker_args+=(-e "TZ=$host_timezone")
-	elif [[ -n "$TZ" ]]; then docker_args+=(-e "TZ=$TZ"); fi
-	for custom_env in "${custom_env_vars[@]}"; do
-		if [[ "$custom_env" == *"="* ]]; then docker_args+=(-e "$custom_env")
-		elif [[ -n "${!custom_env}" ]]; then docker_args+=(-e "$custom_env=${!custom_env}"); fi
-	done
-	[[ -f ".env" ]] && docker_args+=(--env-file .env)
-	if [[ "$enable_background_tasks" = true ]]; then docker_args+=(-e "ENABLE_BACKGROUND_TASKS=1"); fi
 
-	if [[ "$docker_access" = true ]]; then
-		error "⚠️  CRITICAL SECURITY WARNING ⚠️"
-		error "--docker grants Claude COMPLETE control over Docker daemon"
-		error "This allows:"
-		error "  • Container escape to host system"
-		error "  • Mount any host directory"
-		error "  • Create privileged containers"
-		error "  • Access other containers and images"
-		error "This effectively BYPASSES all sandboxing protections!"
-		echo
-		read -p "Type 'I UNDERSTAND THE RISKS' to continue: " -r
-		if [[ "$REPLY" != "I UNDERSTAND THE RISKS" ]]; then
-			error "Aborting for security"
-			exit 1
+	log "Starting cco container..."
+
+	# Remove existing container if it exists
+	docker rm -f "$CONTAINER_NAME" &>/dev/null || true
+
+	# Detect if we have a TTY
+	local tty_flag=""
+	if [[ -t 0 && -t 1 ]]; then
+		tty_flag="-it"
+	fi
+
+	local docker_args=(
+		--rm
+		--init
+		--name "$CONTAINER_NAME"
+		--user "root"
+		-e "HOST_UID=${host_uid}"
+		-e "HOST_GID=${host_gid}"
+		-v "$current_dir":"$current_dir"
+		-w "$current_dir"
+	)
+	
+	# Mount any additional directories specified with --add-dir
+	for dir in "${additional_dirs[@]}"; do
+		if [[ -d "$dir" ]]; then
+			docker_args+=(-v "$dir":"$dir")
+			log "Mounting additional directory: $dir"
 		fi
-		warn "Proceeding with Docker socket access enabled"
-		
+	done
+
+	# Add TTY flags if available
+	if [[ -n "$tty_flag" ]]; then
+		docker_args+=("$tty_flag")
+	fi
+
+	# Detect host timezone and set container timezone
+	local host_timezone=""
+	if [[ -f /etc/timezone ]]; then
+		# Linux: Read from /etc/timezone
+		host_timezone=$(cat /etc/timezone)
+	elif [[ -L /etc/localtime ]]; then
+		# Linux/macOS: Extract from /etc/localtime symlink
+		host_timezone=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
+	elif command -v timedatectl &>/dev/null; then
+		# systemd systems: Use timedatectl
+		host_timezone=$(timedatectl show --property=Timezone --value 2>/dev/null)
+	elif [[ -f /etc/localtime ]]; then
+		# Fallback: Try to determine timezone from /etc/localtime
+		# This is more complex and may not always work reliably
+		host_timezone=$(find /usr/share/zoneinfo -type f -exec cmp -s {} /etc/localtime \; -print | head -1 | sed 's|.*/zoneinfo/||')
+	fi
+
+	# Pass through relevant environment variables
+	local env_vars=(
+		"ANTHROPIC_API_KEY"
+		"ANTHROPIC_BASE_URL"
+		"CLAUDE_CONFIG_DIR"
+		"XDG_CONFIG_HOME"
+		"NO_COLOR"
+		"TERM"
+		"COLORTERM"
+		"LANG"
+		"LC_ALL"
+		"HTTP_PROXY"
+		"HTTPS_PROXY"
+		"NO_PROXY"
+		"GIT_AUTHOR_NAME"
+		"GIT_AUTHOR_EMAIL"
+		"GIT_COMMITTER_NAME"
+		"GIT_COMMITTER_EMAIL"
+	)
+
+	for var in "${env_vars[@]}"; do
+		if [[ -n "${!var}" ]]; then
+			docker_args+=(-e "$var=${!var}")
+		fi
+	done
+
+	# Set timezone in container
+	if [[ -n "$host_timezone" ]]; then
+		log "Setting container timezone to: $host_timezone"
+		docker_args+=(-e "TZ=$host_timezone")
+	elif [[ -n "$TZ" ]]; then
+		# Use TZ environment variable if set
+		docker_args+=(-e "TZ=$TZ")
+	fi
+
+	# Add custom environment variables from command line
+	for custom_env in "${custom_env_vars[@]}"; do
+		if [[ "$custom_env" == *"="* ]]; then
+			# KEY=VALUE format
+			docker_args+=(-e "$custom_env")
+		else
+			# KEY format - pass through from host environment
+			if [[ -n "${!custom_env}" ]]; then
+				docker_args+=(-e "$custom_env=${!custom_env}")
+			fi
+		fi
+	done
+
+	# Load .env file if it exists
+	[[ -f ".env" ]] && docker_args+=(--env-file .env)
+
+	# Enable Claude Code background tasks when requested (can be enabled with --enable-background-tasks)
+	if [[ "$enable_background_tasks" = true ]]; then
+		docker_args+=(-e "ENABLE_BACKGROUND_TASKS=1")
+	fi
+
+	# Enable Docker access if requested
+	if [[ "$docker_access" = true ]]; then
 		# Check for Docker socket locations (Linux and macOS with Docker Desktop)
 		if [[ -S "/var/run/docker.sock" ]]; then
 			log "Enabling Docker access via /var/run/docker.sock"
@@ -615,55 +846,94 @@ run_container() {
 		fi
 	fi
 
+	# Configure container networking for MCP server access
 	setup_container_networking() {
-		local use_host_networking=false networking_method=""
+		local use_host_networking=false
+		local networking_method=""
+
+		# Check if Docker daemon supports host networking by looking for host network driver
 		if docker network ls --format "{{.Driver}}" 2>/dev/null | grep -q "^host$"; then
-			use_host_networking=true; networking_method="Docker host networking"
+			use_host_networking=true
+			networking_method="Docker host networking"
 		else
 			networking_method="Docker bridge networking (host not available)"
 		fi
+
 		if [[ "$use_host_networking" = true ]]; then
-			docker_args+=(--network=host); log "Using host networking for MCP server access ($networking_method)"
+			docker_args+=(--network=host)
+			log "Using host networking for MCP server access ($networking_method)"
 		else
 			docker_args+=(--add-host=host.docker.internal:host-gateway)
 			networking_method="host.docker.internal bridge"
 			log "Using bridge networking ($networking_method)"
+
+			# Warn about MCP server connectivity limitations
 			if [[ -d "$HOME/.claude" && $(find "$HOME/.claude" -name "*.json" -exec grep -l "localhost\|127\.0\.0\.1" {} \; 2>/dev/null | wc -l) -gt 0 ]]; then
 				warn "Detected Claude configs referencing localhost - MCP servers may not be accessible"
-				warn "Consider Docker Desktop 4.34+ / OrbStack or use host.docker.internal in configs"
+				warn "Consider upgrading to Docker Desktop 4.34+ or using OrbStack for full MCP server support"
+				warn "Alternative: Reconfigure MCP servers to use host.docker.internal instead of localhost"
 			fi
 		fi
 	}
+
 	setup_container_networking
 
-	local host_system_claude_dir; host_system_claude_dir=$(find_claude_config_dir)
+	# Set up Claude Code configuration in container
+	local host_system_claude_dir
+	host_system_claude_dir=$(find_claude_config_dir)
 	local project_claude_dir="$current_dir/.claude"
+
+	# Determine the target user's home directory in container
+	# Always use hostuser now that we don't have a pre-existing node user
 	local container_home="/home/hostuser"
 
-	local temp_creds_dir; temp_creds_dir=$(mktemp -d)
-	local original_creds_content=""; local host_creds_file=""; local startup_system_creds_content=""
+	# Let Claude Code auto-detect its config directory (don't override with CLAUDE_CONFIG_DIR)
+
+	# Create temporary directory for credentials extraction
+	local temp_creds_dir
+	temp_creds_dir=$(mktemp -d)
+	local original_creds_content=""
+	local host_creds_file=""
+	local startup_system_creds_content=""
+
+	# Setup cleanup and credentials sync-back on exit
 	if [[ "$allow_oauth_refresh" = true ]]; then
 		trap 'sync_credentials_back "$temp_creds_dir" "$original_creds_content" "$host_creds_file" "$startup_system_creds_content" && rm -rf "$temp_creds_dir"' EXIT
 	else
 		trap 'rm -rf "$temp_creds_dir"' EXIT
 	fi
 
-	if [[ ! -d "$HOME/.claude" ]]; then mkdir -p "$HOME/.claude"; fi
+	# Ensure ~/.claude directory exists and mount it (read-write for state updates)
+	# Claude needs to write to this directory for session data, MCP configs, etc.
+	if [[ ! -d "$HOME/.claude" ]]; then
+		mkdir -p "$HOME/.claude"
+	fi
 	log "Mounting ~/.claude directory: $HOME/.claude → $container_home/.claude"
 	docker_args+=(-v "$HOME/.claude":"$container_home/.claude")
+	
+	# If the detected config directory is different from ~/.claude, mount it too
 	if [[ "$host_system_claude_dir" != "$HOME/.claude" ]]; then
 		log "Also mounting config directory: $host_system_claude_dir → $container_home/.config/claude"
+		# Create the parent directory in the mount command
 		docker_args+=(-v "$host_system_claude_dir":"$container_home/.config/claude")
 	fi
 
+	# Extract fresh credentials from keychain for macOS
 	if command -v security &>/dev/null; then
-		local keychain_creds; keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+		local keychain_creds
+		keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
 		if [[ -n "$keychain_creds" ]]; then
-			echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"; chmod 600 "$temp_creds_dir/.credentials.json"
+			echo "$keychain_creds" >"$temp_creds_dir/.credentials.json"
+			chmod 600 "$temp_creds_dir/.credentials.json"
+
+			# Store original content for sync-back detection if --allow-oauth-refresh enabled
 			if [[ "$allow_oauth_refresh" = true ]]; then
 				original_creds_content=$(cat "$temp_creds_dir/.credentials.json")
-				startup_system_creds_content="$keychain_creds"; host_creds_file=""
+				startup_system_creds_content="$keychain_creds"
+				host_creds_file="" # macOS uses Keychain, not file
 			fi
+
+			# Mount credentials with appropriate permissions based on --allow-oauth-refresh
 			if [[ "$allow_oauth_refresh" = true ]]; then
 				docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
 				log "Mounting fresh credentials from macOS Keychain (read-write for OAuth refresh)"
@@ -673,57 +943,72 @@ run_container() {
 			fi
 		fi
 	elif [[ -f "$host_system_claude_dir/.credentials.json" ]]; then
-		cp "$host_system_claude_dir/.credentials.json" "$temp_creds_dir/.credentials.json"; chmod 600 "$temp_creds_dir/.credentials.json"
+		# Linux: Copy from existing credentials file
+		cp "$host_system_claude_dir/.credentials.json" "$temp_creds_dir/.credentials.json"
+		chmod 600 "$temp_creds_dir/.credentials.json"
+
+		# Store original content for sync-back detection if --allow-oauth-refresh enabled
 		if [[ "$allow_oauth_refresh" = true ]]; then
 			original_creds_content=$(cat "$temp_creds_dir/.credentials.json")
 			startup_system_creds_content=$(cat "$host_system_claude_dir/.credentials.json")
 			host_creds_file="$host_system_claude_dir/.credentials.json"
 		fi
+
+		# Mount credentials with appropriate permissions based on --allow-oauth-refresh
 		if [[ "$allow_oauth_refresh" = true ]]; then
-			docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json"); log "Mounting credentials file (read-write for OAuth refresh)"
+			docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json")
+			log "Mounting credentials file (read-write for OAuth refresh)"
 		else
-			docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro"); log "Mounting credentials file (read-only)"
+			docker_args+=(-v "$temp_creds_dir/.credentials.json":"$container_home/.claude/.credentials.json:ro")
+			log "Mounting credentials file (read-only)"
 		fi
 	fi
 
-	if [[ ! -f "$HOME/.claude.json" ]]; then echo "{}" > "$HOME/.claude.json"; fi
+	# Mount main .claude.json from home directory (this is separate from .claude/)
+	# Create it if it doesn't exist to ensure Claude can write to it
+	if [[ ! -f "$HOME/.claude.json" ]]; then
+		echo "{}" > "$HOME/.claude.json"
+	fi
 	log "Mounting main .claude.json from home directory"
 	docker_args+=(-v "$HOME/.claude.json":"$container_home/.claude.json")
 
+	# Mount project-specific .claude directory (read-write for project settings)
 	if [[ -d "$project_claude_dir" ]]; then
 		log "Mounting project Claude config from $project_claude_dir (read-write)"
 		docker_args+=(-v "$project_claude_dir":"$project_claude_dir")
 	fi
 
+	# Bind mount common config files
 	[[ -f "$HOME/.gitconfig" ]] && docker_args+=(-v "$HOME/.gitconfig":"$container_home/.gitconfig:ro")
-	if [[ -n "${SSH_AUTH_SOCK:-}" && -S "$SSH_AUTH_SOCK" ]]; then
-		docker_args+=(-v "$SSH_AUTH_SOCK":/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent)
-		log "Using SSH agent socket for Git auth (no private keys mounted)"
-	else
-		warn "SSH_AUTH_SOCK not set; Git over SSH may prompt for creds or fail"
-	fi
-	[[ -f "$HOME/.ssh/known_hosts" ]] && docker_args+=(-v "$HOME/.ssh/known_hosts":"$container_home/.ssh/known_hosts:ro")
+	[[ -d "$HOME/.ssh" ]] && docker_args+=(-v "$HOME/.ssh":"$container_home/.ssh:ro")
 
-	# Hardening
-	if [[ "${CCO_HARDEN:-1}" = "1" ]]; then
-		docker_args+=(--read-only --tmpfs /tmp --tmpfs /var/tmp --cap-drop ALL --security-opt no-new-privileges --pids-limit 512)
-		[[ -n "${CCO_MEMORY_LIMIT:-}" ]] && docker_args+=(--memory="$CCO_MEMORY_LIMIT")
-	fi
-
+	# Function to start background SIGWINCH monitor
 	start_sigwinch_monitor() {
 		local container_name="$1"
+
+		# Background process to monitor and forward SIGWINCH signals to container
 		(
+			# Wait for container to initialize
 			sleep 2
+
+			# Set up signal handler to forward SIGWINCH to container processes
 			trap "docker exec '$container_name' pkill -SIGWINCH -u hostuser 2>/dev/null" WINCH
-			while docker ps --format '{{.Names}}' | grep -q "^$container_name\$" 2>/dev/null; do sleep 2; done
+
+			# Keep monitor alive while container exists
+			while docker ps --format '{{.Names}}' | grep -q "^$container_name\$" 2>/dev/null; do
+				sleep 2
+			done
 		) &
 	}
 
+	# Run the container (entrypoint will handle user setup)
 	if [[ "$shell_mode" = true ]]; then
 		if [[ ${#claude_args[@]} -eq 0 ]]; then
+			# Interactive shell mode
 			start_sigwinch_monitor "$CONTAINER_NAME"
 			docker run "${docker_args[@]}" "$IMAGE_NAME" bash
 		else
+			# Shell command mode - execute the provided command
 			docker run "${docker_args[@]}" "$IMAGE_NAME" bash -c "${claude_args[*]}"
 		fi
 	else
@@ -737,43 +1022,135 @@ run_container() {
 	fi
 }
 
+# Backup Claude Code credentials to a safe location
 backup_credentials() {
-	local backup_dir="$HOME/.cco-backups"; local timestamp; timestamp=$(date +"%Y%m%d_%H%M%S")
-	local backup_file="$backup_dir/claude-credentials.$timestamp.json"; mkdir -p "$backup_dir"
+	local backup_dir="$HOME/.cco-backups"
+	local timestamp
+	timestamp=$(date +"%Y%m%d_%H%M%S")
+	local backup_file="$backup_dir/claude-credentials.$timestamp.json"
+
+	# Create backup directory if it doesn't exist
+	mkdir -p "$backup_dir"
+
 	log "Backing up Claude Code credentials..."
+
 	if command -v security &>/dev/null; then
-		local keychain_creds; keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
-		if [[ -n "$keychain_creds" ]]; then echo "$keychain_creds" >"$backup_file"; chmod 600 "$backup_file"; log "Backed up Keychain credentials to: $backup_file"; echo "To restore: ./cco restore-creds \"$backup_file\""; else error "No Claude Code credentials found in macOS Keychain"; exit 1; fi
+		# macOS: Extract from Keychain
+		local keychain_creds
+		keychain_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+		if [[ -n "$keychain_creds" ]]; then
+			echo "$keychain_creds" >"$backup_file"
+			chmod 600 "$backup_file"
+			log "Successfully backed up Keychain credentials to: $backup_file"
+			echo "To restore: ./cco restore-creds \"$backup_file\""
+		else
+			error "No Claude Code credentials found in macOS Keychain"
+			exit 1
+		fi
 	else
-		local dir; dir=$(find_claude_config_dir); local f="$dir/.credentials.json"
-		if [[ -f "$f" ]]; then cp "$f" "$backup_file"; chmod 600 "$backup_file"; log "Backed up credentials file to: $backup_file"; echo "To restore: ./cco restore-creds \"$backup_file\""; else error "No Claude Code credentials file found at: $f"; exit 1; fi
+		# Linux: Copy from credentials file
+		local claude_config_dir
+		claude_config_dir=$(find_claude_config_dir)
+		local creds_file="$claude_config_dir/.credentials.json"
+
+		if [[ -f "$creds_file" ]]; then
+			cp "$creds_file" "$backup_file"
+			chmod 600 "$backup_file"
+			log "Successfully backed up credentials file to: $backup_file"
+			echo "To restore: ./cco restore-creds \"$backup_file\""
+		else
+			error "No Claude Code credentials file found at: $creds_file"
+			exit 1
+		fi
 	fi
 }
 
+# Restore Claude Code credentials from a backup
 restore_credentials() {
-	local backup_file="$1" backup_dir="$HOME/.cco-backups"
+	local backup_file="$1"
+	local backup_dir="$HOME/.cco-backups"
+
 	if [[ -z "$backup_file" ]]; then
-		if [[ ! -d "$backup_dir" ]]; then error "No backup directory found at: $backup_dir"; echo "Run './cco backup-creds' first"; exit 1; fi
+		# Auto-select most recent backup
+		if [[ ! -d "$backup_dir" ]]; then
+			error "No backup directory found at: $backup_dir"
+			echo "Run './cco backup-creds' first to create a backup"
+			exit 1
+		fi
+
+		# Find the most recent backup file
 		backup_file=$(find "$backup_dir" -name "claude-credentials.*.json" -not -name "*.pre-restore.*" -type f -print0 2>/dev/null | xargs -0 ls -t | head -1)
-		if [[ -z "$backup_file" ]]; then error "No backup files found in: $backup_dir"; echo "Run './cco backup-creds' first"; exit 1; fi
+
+		if [[ -z "$backup_file" ]]; then
+			error "No backup files found in: $backup_dir"
+			echo "Run './cco backup-creds' first to create a backup"
+			exit 1
+		fi
+
+		# Confirm with user
 		echo "Most recent backup found: $(basename "$backup_file")"
 		echo "Created: $(date -r "$backup_file" 2>/dev/null || stat -c %y "$backup_file" 2>/dev/null || echo "unknown")"
-		echo; read -p "Restore this backup? [y/N]: " -r; [[ $REPLY =~ ^[Yy]$ ]] || { echo "Restore cancelled"; exit 0; }
+		echo
+		read -p "Restore this backup? [y/N]: " -r
+		if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+			echo "Restore cancelled"
+			exit 0
+		fi
 	fi
-	[[ -f "$backup_file" ]] || { error "Backup file not found: $backup_file"; exit 1; }
+
+	if [[ ! -f "$backup_file" ]]; then
+		error "Backup file not found: $backup_file"
+		exit 1
+	fi
+
 	log "Restoring Claude Code credentials from: $backup_file"
-	local ts; ts=$(date +"%Y%m%d_%H%M%S")
+
+	# Create a backup of current credentials before restoring
+	local current_backup_timestamp
+	current_backup_timestamp=$(date +"%Y%m%d_%H%M%S")
+
 	if command -v security &>/dev/null; then
+		# macOS: Backup current and restore to Keychain
 		log "Creating backup of current Keychain credentials..."
-		local current_creds; current_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
-		if [[ -n "$current_creds" ]]; then mkdir -p "$HOME/.cco-backups"; echo "$current_creds" >"$HOME/.cco-backups/claude-credentials.pre-restore.$ts.json"; log "Current credentials backed up"; fi
-		local restore_creds; restore_creds=$(cat "$backup_file")
-		security add-generic-password -U -s "Claude Code-credentials" -a "$USER" -w "$restore_creds" >/dev/null 2>&1 || { error "Failed to restore credentials to macOS Keychain"; exit 1; }
-		log "Successfully restored credentials to macOS Keychain"
+		local current_creds
+		current_creds=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || echo "")
+		if [[ -n "$current_creds" ]]; then
+			local current_backup_dir="$HOME/.cco-backups"
+			mkdir -p "$current_backup_dir"
+			echo "$current_creds" >"$current_backup_dir/claude-credentials.pre-restore.$current_backup_timestamp.json"
+			log "Current credentials backed up to: $current_backup_dir/claude-credentials.pre-restore.$current_backup_timestamp.json"
+		fi
+
+		# Restore from backup file
+		local restore_creds
+		restore_creds=$(cat "$backup_file")
+		if security add-generic-password -U -s "Claude Code-credentials" -a "$USER" -w "$restore_creds" >/dev/null 2>&1; then
+			log "Successfully restored credentials to macOS Keychain"
+		else
+			error "Failed to restore credentials to macOS Keychain"
+			exit 1
+		fi
 	else
-		local dir; dir=$(find_claude_config_dir); local f="$dir/.credentials.json"
-		if [[ -f "$f" ]]; then cp "$f" "$f.pre-restore.$ts"; log "Current credentials backed up to: $f.pre-restore.$ts"; fi
-		cp "$backup_file" "$f" && chmod 600 "$f" && log "Successfully restored credentials to: $f" || { error "Failed to restore credentials to: $f"; exit 1; }
+		# Linux: Backup current and restore to file
+		local claude_config_dir
+		claude_config_dir=$(find_claude_config_dir)
+		local creds_file="$claude_config_dir/.credentials.json"
+
+		# Backup current credentials if they exist
+		if [[ -f "$creds_file" ]]; then
+			local current_backup_file="${creds_file}.pre-restore.$current_backup_timestamp"
+			cp "$creds_file" "$current_backup_file"
+			log "Current credentials backed up to: $current_backup_file"
+		fi
+
+		# Restore from backup
+		if cp "$backup_file" "$creds_file"; then
+			chmod 600 "$creds_file"
+			log "Successfully restored credentials to: $creds_file"
+		else
+			error "Failed to restore credentials to: $creds_file"
+			exit 1
+		fi
 	fi
 }
 
@@ -789,85 +1166,179 @@ rebuild_image=false
 pull_image=false
 shell_mode=false
 
-# Parse cco flags first
+# First pass: Extract cco-specific flags and collect remaining args
+# This ensures --add-dir and other cco flags are parsed before subcommands
 remaining_args=()
 while [[ $# -gt 0 ]]; do
 	case $1 in
 	--backend)
-		[[ $# -ge 2 ]] || { error "--backend requires an argument (auto, native, docker)"; exit 1; }
-		SANDBOX_BACKEND="$2"; shift 2 ;;
-	--rebuild) rebuild_image=true; shift ;;
-	--pull) pull_image=true; shift ;;
+		if [[ $# -lt 2 ]]; then
+			error "--backend requires an argument (auto, native, docker)"
+			exit 1
+		fi
+		SANDBOX_BACKEND="$2"
+		shift 2
+		;;
+	--rebuild)
+		rebuild_image=true
+		shift
+		;;
+	--pull)
+		pull_image=true
+		shift
+		;;
 	--docker)
 		docker_access=true
-		warn "HIGH RISK: --docker grants container control over host Docker via docker.sock."
-		warn "Prefer avoiding this flag. If you continue, review mounts and image source carefully."
-		shift ;;
-	--allow-oauth-refresh) allow_oauth_refresh=true; shift ;;
-	--enable-background-tasks) enable_background_tasks=true; shift ;;
-	--env|-e)
-		[[ $# -ge 2 ]] || { error "--env requires an argument (KEY=VALUE or KEY)"; exit 1; }
-		custom_env_vars+=("$2"); shift 2 ;;
-	--packages|-p)
-		[[ $# -ge 2 ]] || { error "--packages requires an argument (package1,package2,...)"; exit 1; }
-		IFS=',' read -ra ADDR <<<"$2"; for pkg in "${ADDR[@]}"; do custom_packages+=("$pkg"); done; shift 2 ;;
-	--add-dir|--add-dir=*)
+		shift
+		;;
+	--allow-oauth-refresh)
+		allow_oauth_refresh=true
+		shift
+		;;
+	--enable-background-tasks)
+		enable_background_tasks=true
+		shift
+		;;
+	--env | -e)
+		if [[ $# -lt 2 ]]; then
+			error "--env requires an argument (KEY=VALUE or KEY)"
+			exit 1
+		fi
+		custom_env_vars+=("$2")
+		shift 2
+		;;
+	--packages | -p)
+		if [[ $# -lt 2 ]]; then
+			error "--packages requires an argument (package1,package2,...)"
+			exit 1
+		fi
+		IFS=',' read -ra ADDR <<<"$2"
+		for pkg in "${ADDR[@]}"; do
+			custom_packages+=("$pkg")
+		done
+		shift 2
+		;;
+	--add-dir | --add-dir=*)
+		# Handle --add-dir for both notations
 		if [[ "$1" == *"="* ]]; then
-			remaining_args+=("$1")
+			# --add-dir=<dir> notation
+			remaining_args+=("$1")  # Keep for Claude
 			dir_path="${1#*=}"
-			if [[ ! -d "$dir_path" ]]; then warn "Directory does not exist: $dir_path"
-			else dir_path=$(cd "$dir_path" && pwd); additional_dirs+=("$dir_path"); fi
+			if [[ ! -d "$dir_path" ]]; then
+				warn "Directory does not exist: $dir_path"
+			else
+				dir_path=$(cd "$dir_path" && pwd)
+				additional_dirs+=("$dir_path")
+			fi
 			shift
 		else
-			remaining_args+=("$1"); shift
+			# --add-dir <dir> notation
+			remaining_args+=("$1")  # Keep for Claude
+			shift
+			# Collect directories until next flag or known subcommand
 			while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; do
-				case "$1" in shell|self-update|cleanup|info|backup-creds|restore-creds|pull|rebuild) break ;;
-				*) dir_path="$1"; remaining_args+=("$1")
-				   if [[ ! -d "$dir_path" ]]; then warn "Directory does not exist: $dir_path"
-				   else dir_path=$(cd "$dir_path" && pwd); additional_dirs+=("$dir_path"); fi
-				   shift ;;
+				# Stop if we hit a known subcommand
+				case "$1" in
+					shell|self-update|cleanup|info|backup-creds|restore-creds|pull|rebuild)
+						# This is a subcommand, not a directory
+						break
+						;;
+					*)
+						dir_path="$1"
+						remaining_args+=("$1")  # Keep for Claude
+						if [[ ! -d "$dir_path" ]]; then
+							warn "Directory does not exist: $dir_path"
+						else
+							dir_path=$(cd "$dir_path" && pwd)
+							additional_dirs+=("$dir_path")
+						fi
+						shift
+						;;
 				esac
 			done
-		fi ;;
-	*) remaining_args+=("$1"); shift ;;
+		fi
+		;;
+	*)
+		# Not a cco flag, keep for subcommand/Claude processing
+		remaining_args+=("$1")
+		shift
+		;;
 	esac
 done
 
-# Subcommands
+# Now handle subcommands with remaining args
 set -- "${remaining_args[@]}"
 if [[ $# -gt 0 ]]; then
 	case $1 in
-	self-update) update_cco; exit 0 ;;
-	shell) shell_mode=true; shift; claude_args=("$@") ;;
+	self-update)
+		update_cco
+		exit 0
+		;;
+	shell)
+		shell_mode=true
+		shift
+		# All remaining arguments are shell command arguments
+		claude_args=("$@")
+		;;
 	cleanup)
 		log "Cleaning up cco containers..."
 		containers=$(docker ps -a --format "{{.Names}}" | grep "^cco-" || true)
-		if [[ -n "$containers" ]]; then echo "$containers" | xargs docker rm -f; log "Cleanup complete"
-		else log "No cco containers found"; fi
-		exit 0 ;;
-	info) show_info; exit 0 ;;
-	backup-creds) backup_credentials; exit 0 ;;
-	restore-creds) restore_credentials "$2"; exit 0 ;;
+		if [[ -n "$containers" ]]; then
+			echo "$containers" | xargs docker rm -f
+			log "Cleanup complete"
+		else
+			log "No cco containers found"
+		fi
+		exit 0
+		;;
+	info)
+		show_info
+		exit 0
+		;;
+	backup-creds)
+		backup_credentials
+		exit 0
+		;;
+	restore-creds)
+		restore_credentials "$2"
+		exit 0
+		;;
 	pull)
-		log "Pulling latest pre-built image..."; check_dependencies
-		if pull_prebuilt_image; then log "Pull completed successfully"; else error "Failed to pull pre-built image"; exit 1; fi
-		exit 0 ;;
-	rebuild) log "Rebuilding cco image..."; check_dependencies; build_image; log "Rebuild completed successfully"; exit 0 ;;
-	--version|-v) show_version; exit 0 ;;
-	--help|-h)
+		log "Pulling latest pre-built image..."
+		check_dependencies
+		if pull_prebuilt_image; then
+			log "Pull completed successfully"
+		else
+			error "Failed to pull pre-built image"
+			exit 1
+		fi
+		exit 0
+		;;
+	rebuild)
+		log "Rebuilding cco image..."
+		check_dependencies
+		build_image
+		log "Rebuild completed successfully"
+		exit 0
+		;;
+	--version | -v)
+		show_version
+		exit 0
+		;;
+	--help | -h)
 		echo "cco - Claude Container (or Claude Condom if you're so inclined)"
 		echo "A thin protective layer for Claude Code"
-		echo
+		echo ""
 		echo "Usage: $0 [COMMAND|OPTIONS] [CLAUDE_ARGS...]"
-		echo
+		echo ""
 		echo "Commands:"
-		echo "  self-update       Update cco to pinned commit"
+		echo "  self-update       Update cco to latest version"
 		echo "  shell [cmd...]    Start interactive shell or run shell command in the cco container"
 		echo "  cleanup           Remove all cco containers"
 		echo "  info              Show system information and readiness status"
 		echo "  pull              Pull latest pre-built image from registry"
 		echo "  rebuild           Rebuild Docker image from source"
-		echo
+		echo ""
 		echo "Options:"
 		echo "  --rebuild         Force rebuild of Docker image (updates to latest Claude Code)"
 		echo "  --pull            Pull latest pre-built image before starting container"
@@ -876,7 +1347,6 @@ if [[ $# -gt 0 ]]; then
 		echo "  --packages, -p    Install additional apt packages into container"
 		echo "  --backend TYPE    Force specific sandbox backend (auto, native, docker)"
 		echo "  --docker          Enable Docker access (bind mount Docker socket)"
-		echo "                    WARNING: Dangerous. Container can control Docker on host."
 		echo "  --allow-oauth-refresh (EXPERIMENTAL)"
 		echo "                    Allow OAuth token refresh with automatic sync-back"
 		echo "                    Permits Claude to refresh expired tokens and syncs them back"
@@ -887,18 +1357,9 @@ if [[ $# -gt 0 ]]; then
 		echo "                    Background tasks provide enhanced functionality like"
 		echo "                    improved code analysis and autonomous development features"
 		echo "  --help, -h        Show this help message"
-		echo
+		echo ""
 		echo "Claude Code Options (passed through):"
 		echo "  --add-dir <directories...>  Additional directories to allow tool access to"
-		echo
-		echo "Environment Security Controls:"
-		echo "  CCO_DISABLE_PULL=1   (default) Do not auto-pull prebuilt images unless --pull is used"
-		echo "  CCO_HARDEN=1         (default) Add hardening flags: read-only FS, tmpfs /tmp,/var/tmp,"
-		echo "                       drop capabilities, no-new-privileges, pids limit; optional memory cap"
-		echo "  CCO_MEMORY_LIMIT=2g  Optional memory limit for the container"
-		echo "  CCO_PINNED_COMMIT    Commit to pin self-update to (default: $CCO_PINNED_COMMIT)"
-		echo "  SSH_AUTH_SOCK        If set, the agent socket is mounted instead of ~/.ssh"
-		echo "                       (only mounts known_hosts read-only if present)"
 		echo ""
 		echo "All other arguments are passed to Claude Code inside the container."
 		echo "This means all Claude Code options (--resume, --model, etc.) work normally."
@@ -922,39 +1383,82 @@ if [[ $# -gt 0 ]]; then
 		echo "    - macOS: sandbox-exec (built-in) OR Docker"
 		echo "    - Linux: bubblewrap (bwrap) OR Docker"
 		echo "  - Claude Code authenticated (run \`claude\` and login)"
-		exit 0 ;;
-	*) claude_args=("$@") ;;
+		exit 0
+		;;
+	*)
+		# Not a subcommand, pass to Claude
+		claude_args=("$@")
+		;;
 	esac
 fi
 
+# The main argument parsing loop has been moved to before subcommand handling
+# to ensure cco flags like --add-dir are parsed first
+
+# Main execution flow
 main() {
 	log "Starting cco..."
+
+	# Detect sandbox backend
 	detect_sandbox_backend "$SANDBOX_BACKEND"
+	
+	# Check dependencies based on backend
 	check_dependencies
-	[[ "$SANDBOX_BACKEND" == "docker" ]] && check_docker_dependencies
+	if [[ "$SANDBOX_BACKEND" == "docker" ]]; then
+		check_docker_dependencies
+	fi
+	
 	verify_claude_authentication
+
+	# Handle --pull flag first
 	if [[ "$pull_image" = true ]]; then
 		log "Pulling latest pre-built image..."
-		if pull_prebuilt_image; then log "Pull completed successfully"; else warn "Failed to pull pre-built image, using existing or building locally"; fi
+		if pull_prebuilt_image; then
+			log "Pull completed successfully"
+		else
+			warn "Failed to pull pre-built image, using existing or building locally"
+		fi
 	fi
+
+	# Only handle Docker image operations if using Docker backend
 	if [[ "$SANDBOX_BACKEND" == "docker" ]]; then
+		# Determine whether to pull pre-built image or build locally
 		if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+			# No local image exists
 			if should_use_prebuilt_image; then
-				if ! pull_prebuilt_image; then build_image; fi
+				# Try to pull pre-built image, fallback to build
+				if ! pull_prebuilt_image; then
+					build_image
+				fi
 			else
-				[[ "$rebuild_image" = true ]] && log "Rebuilding cco image..."
-				[[ ${#custom_packages[@]} -gt 0 ]] && log "Custom packages specified, building image..."
+				# Build locally due to customizations
+				if [[ "$rebuild_image" = true ]]; then
+					log "Rebuilding cco image..."
+				elif [[ ${#custom_packages[@]} -gt 0 ]]; then
+					log "Custom packages specified, building image..."
+				fi
 				build_image
 			fi
 		elif [[ "$rebuild_image" = true ]] || [[ ${#custom_packages[@]} -gt 0 ]]; then
-			[[ ${#custom_packages[@]} -gt 0 ]] && log "Custom packages specified, rebuilding image..." || log "Rebuilding cco image..."
+			# Force rebuild requested or customizations specified
+			if [[ ${#custom_packages[@]} -gt 0 ]]; then
+				log "Custom packages specified, rebuilding image..."
+			else
+				log "Rebuilding cco image..."
+			fi
 			docker image rm "$IMAGE_NAME" &>/dev/null || true
 			build_image
 		else
 			log "Using existing cco image"
 		fi
 	fi
-	if [[ "$SANDBOX_BACKEND" == "native" ]]; then run_native_sandbox; else run_container; fi
+
+	# Run with appropriate backend
+	if [[ "$SANDBOX_BACKEND" == "native" ]]; then
+		run_native_sandbox
+	else
+		run_container
+	fi
 }
 
 main
