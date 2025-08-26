@@ -153,7 +153,7 @@ curl -fsSL https://raw.githubusercontent.com/sfdan/cco/master/install.sh | bash
 git clone https://github.com/sfdan/cco.git
 cd cco
 chmod +x cco
-sudo ln -s "$PWD/cco" /usr/local/bin/cco
+sudo ln -s "$PWD/cco" /usr/local/bin/cco && cp sandbox /usr/local/
 ```
 
 ## Usage
